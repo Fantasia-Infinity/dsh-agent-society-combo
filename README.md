@@ -19,7 +19,7 @@
 |---|---|
 | deepseek-harness | `47f943859b` |
 | dsh-TUI | `0e7a899` |
-| AgentSociety | `aeb321c` |
+| AgentSociety | `bba5cdc` |
 | dsh-anchored-standard | `d97bec9` |
 
 默认 TUI preset：`anchored-standard`。`standard` / `code` / `minimal` /
@@ -37,6 +37,30 @@ curl -fsSL https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society
 
 ```powershell
 irm https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society-combo/main/install.ps1 | iex
+```
+
+### 手动 clone 后安装
+
+```bash
+git clone https://github.com/Fantasia-Infinity/dsh-agent-society-combo.git
+cd dsh-agent-society-combo
+bash install.sh
+```
+
+Windows：
+
+```powershell
+git clone https://github.com/Fantasia-Infinity/dsh-agent-society-combo.git
+cd dsh-agent-society-combo
+.\install.ps1
+```
+
+`install.sh` / `install.ps1` 会检测到自己位于 combo checkout 内，直接使用
+当前 checkout 的 `sources.lock.json` 和 `scripts/install.mjs`，不会重复 clone
+combo 仓库。等价命令：
+
+```bash
+node scripts/install.mjs --update
 ```
 
 ### 参数

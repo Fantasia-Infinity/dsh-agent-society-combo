@@ -20,6 +20,18 @@ try {
         throw "Node.js 22.19 or newer is required (found $(node --version))."
     }
 
+    # Manual-clone mode: when this script itself lives inside a combo checkout,
+    # install from that checkout instead of downloading another copy.
+    if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot 'scripts/install.mjs')) -and (Test-Path (Join-Path $PSScriptRoot 'sources.lock.json'))) {
+        Push-Location $PSScriptRoot
+        try {
+            node scripts/install.mjs @args
+        } finally {
+            Pop-Location
+        }
+        return
+    }
+
     New-Item -ItemType Directory -Force -Path $TempRoot | Out-Null
     git clone --quiet --depth 1 --branch $ComboRef $ComboRepo (Join-Path $TempRoot 'combo')
     Push-Location (Join-Path $TempRoot 'combo')

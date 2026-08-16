@@ -33,6 +33,17 @@ if [ "$NODE_MAJOR" -lt 22 ]; then
   exit 1
 fi
 
+# Manual-clone mode: when this script itself lives inside a combo checkout,
+# install from that checkout instead of downloading another copy.
+case "$0" in
+    */*) script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) ;;
+    *) script_dir=$(pwd) ;;
+esac
+if [ -f "$script_dir/scripts/install.mjs" ] && [ -f "$script_dir/sources.lock.json" ]; then
+    cd "$script_dir"
+    exec node scripts/install.mjs "$@"
+fi
+
 mkdir -p "$TMP_ROOT"
 git clone --quiet --depth 1 --branch "$COMBO_REF" "$COMBO_REPO" "$TMP_ROOT/combo"
 cd "$TMP_ROOT/combo"

@@ -513,8 +513,14 @@ async function createOpenCodeFullLinks(openCodeFull) {
   ensureDir(join(dshHome, '.agent-presets'))
   const source = join(openCodeFull, 'presets', 'opencode-full')
   const dest = join(dshHome, '.agent-presets', 'opencode-full')
+  // Stage then rename so a running Web server can never observe a half-copied
+  // preset directory during `--update` (that window surfaces as a mount
+  // failure with only the opaque "loader entries failed to apply" text).
+  const staging = `${dest}.staging-${process.pid}`
+  rmSync(staging, { recursive: true, force: true })
+  cpSync(source, staging, { recursive: true })
   rmSync(dest, { recursive: true, force: true })
-  cpSync(source, dest, { recursive: true })
+  renameSync(staging, dest)
   console.log(`[preset] copy opencode-full -> ${dest}`)
 }
 

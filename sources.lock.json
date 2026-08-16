@@ -69,7 +69,7 @@
       "repo": "https://github.com/xiaobright/dsh-anchored-standard.git"
     },
     "dsh-opencode-full": {
-      "commit": "286972f19b80a881f1cf3a9fdc458e9b7cb2bafc",
+      "commit": "4c2e4740396c1334a2bef013f6d7c78376983dd1",
       "files": [],
       "patches": [],
       "repo": "https://github.com/Fantasia-Infinity/dsh-opencode-full.git"

@@ -20,10 +20,9 @@
 |---|---|
 | deepseek-harness | `47f943859b` |
 | dsh-TUI | `0e7a899` |
-| AgentSociety | `399a587` |
-| dsh-anchored-standard | `0a38616` |
-| dsh-opencode-full（可选） | `286972f` |
-
+| AgentSociety | `7c905c7` |
+| dsh-anchored-standard | `0a38616c1b7ce4219b6d94d95c89f34a90741616` |
+| dsh-opencode-full（可选） | `f4d4dda7c2ab8032ed169a770db3594cf98ea638` |
 默认 TUI preset：`anchored-standard`。`standard` / `code` / `minimal` /
 `cordis` 仍保留可选（安装时 `--preset standard`，或 TUI 内 `/preset`）。
 

@@ -38,9 +38,13 @@ for (const [name, comp] of Object.entries(manifest.components)) {
   check(`${name} checkout`, existsSync(join(dir, '.git')), dir)
   check(`${name} state`, existsSync(state), state)
   if (existsSync(dir)) {
-    const result = spawnSync('git', ['-C', dir, 'rev-parse', '--short', 'HEAD'], { encoding: 'utf8' })
+    const result = spawnSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' })
     const actual = result.stdout.trim()
-    check(`${name} commit`, actual === comp.commit, `wanted ${comp.commit}, got ${actual || 'unknown'}`)
+    check(
+      `${name} commit`,
+      actual.startsWith(comp.commit) || comp.commit.startsWith(actual),
+      `wanted ${comp.commit}, got ${actual || 'unknown'}`,
+    )
   }
 }
 
@@ -49,6 +53,7 @@ const tui = join(root, 'sources', 'dsh-tui')
 const agentSociety = join(root, 'sources', 'agent-society')
 check('harness dsh bin', Boolean(file(join(harness, 'apps', 'cli', 'lib', 'bin.js'))))
 check('harness app-boot lib', Boolean(file(join(harness, 'packages', 'boot', 'app-boot', 'lib', 'index.js'))))
+check('harness web dist', Boolean(file(join(harness, 'apps', 'web', 'dist', 'index.html'))))
 check('dsh-tui plugin lib', Boolean(file(join(tui, 'lib', 'types', 'plugin.js'))))
 check('agent-host cli', Boolean(file(join(agentSociety, 'agent-host', 'dist', 'src', 'cli.js'))))
 check('dsh-plugin lib', Boolean(file(join(agentSociety, 'dsh-plugin', 'lib', 'worker-plugin.js'))))
@@ -59,13 +64,17 @@ const preset = join(dshHome, '.agent-presets', 'anchored-standard', 'preset.yml'
 check('anchored-standard preset', existsSync(preset), preset)
 const workerProfile = join(dshHome, 'profiles', 'agent-society-worker', 'package.json')
 check('agent-society-worker profile', existsSync(workerProfile), workerProfile)
+const webProfile = join(dshHome, 'profiles', 'agent-society-web', 'package.json')
+check('agent-society-web profile', existsSync(webProfile), webProfile)
 const pref = join(home, '.dsh-tui', 'agent-preset.json')
 check('dsh-tui default preset', existsSync(pref), pref)
 
 const dshCmd = join(binDir, platform() === 'win32' ? 'dsh.cmd' : 'dsh')
 const agentCmd = join(binDir, platform() === 'win32' ? 'agent.cmd' : 'agent')
+const webCmd = join(binDir, platform() === 'win32' ? 'dsh-web.cmd' : 'dsh-web')
 check('dsh command', existsSync(dshCmd), dshCmd)
 check('agent command', existsSync(agentCmd), agentCmd)
+check('dsh-web command', existsSync(webCmd), webCmd)
 
 console.log(checks.join('\n'))
 console.log('')

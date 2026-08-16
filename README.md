@@ -22,7 +22,7 @@
 | dsh-TUI | `0e7a899` |
 | AgentSociety | `399a587` |
 | dsh-anchored-standard | `d97bec9` |
-| dsh-opencode-full（可选） | `82ecfe4` |
+| dsh-opencode-full（可选） | `286972f` |
 
 默认 TUI preset：`anchored-standard`。`standard` / `code` / `minimal` /
 `cordis` 仍保留可选（安装时 `--preset standard`，或 TUI 内 `/preset`）。

@@ -156,6 +156,10 @@ agent-society-web:
 
 它和 `agent-society-worker`、TUI 外部 bundle 消费同一份 AgentSociety 插件，
 session 也共用 `$DSH_HOME/sessions`。`agent web` 或 `dsh-web` 直接启动。
+安装器管理的 profile patch 会把 session 压缩默认设为 `zstd`，与共享
+session 根目录里已有的 zstd session 保持一致；机器级覆盖请写
+`~/.dsh/cordis.patch.yml`，不要改 profile 自己的 `cordis.patch.yml`
+（重跑安装器会重建它，旧内容自动备份为 `*.combo-backup-*`）。
 
 DeepSeek Harness 上游没有内置 SSH 工具；combo 可选向该 profile 追加社区维护的
 SSH 插件：

@@ -1,0 +1,28 @@
+diff --git a/packages/session/session-persistence/tests/coordinator-contract.ts b/packages/session/session-persistence/tests/coordinator-contract.ts
+index 8633faa886..bf5738608f 100644
+--- a/packages/session/session-persistence/tests/coordinator-contract.ts
++++ b/packages/session/session-persistence/tests/coordinator-contract.ts
+@@ -723,6 +723,23 @@ export function runCoordinatorContract(name: string, makeFixture: () => Promise<
+         await expect(ctx.sessionPersistence.readFrom(pluginId, 0))
+           .resolves.toMatchObject({ events: [{ type: 'plugin/test', data: null, ignorable: true }] })
+
++        const activityId = SessionId('shared-activity-status-event')
++        await ctx.sessionPersistence.create(meta(activityId, WORK))
++        await ctx.sessionPersistence.append(activityId, [{
++          type: 'activity/status',
++          seq: 0,
++          time: 1,
++          data: {
++            phase: 'idle',
++            line: 'ready',
++            toolCount: 0,
++            turnElapsedMs: 0,
++            phaseStartedAt: 1,
++          },
++        } as unknown as SessionEvent])
++        await expect(ctx.sessionPersistence.load(activityId))
++          .resolves.toMatchObject({ events: [{ type: 'activity/status', data: { phase: 'idle', line: 'ready' } }] })
++
+         for (const type of ['user/message', 'assistant/message'] as const) {
+           const missingContentId = SessionId(`invalid-${type}-without-content`)
+           await ctx.sessionPersistence.create(meta(missingContentId, WORK))

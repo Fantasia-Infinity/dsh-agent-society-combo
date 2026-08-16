@@ -1,0 +1,63 @@
+diff --git a/scripts/build.sh b/scripts/build.sh
+index adb07d1..27a5bf1 100644
+--- a/scripts/build.sh
++++ b/scripts/build.sh
+@@ -3,8 +3,8 @@
+ # declarations) with the DSH checkout's TypeScript. Dependency resolution
+ # mirrors dsh-vision: node_modules holds symlinks into the checkout, so tsc
+ # type-checks against the same vendored/workspace packages the running dsh
+-# ships. Requires a DSH checkout ($DSH_HOME/source/current, ~/.dsh/..., or
+-# the `dsh` bin resolving into one).
++# ships. Set DSH_CHECKOUT to use a sibling source checkout directly; without
++# it, retain the installed-source discovery used by the published workflow.
+ set -eu
+
+ ROOT="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
+@@ -12,7 +12,9 @@ cd "$ROOT"
+
+ # --- Locate the DSH checkout -------------------------------------------
+ CHECKOUT=""
+-if [ -n "${DSH_HOME:-}" ] && [ -d "$DSH_HOME/source/current" ]; then
++if [ -n "${DSH_CHECKOUT:-}" ] && [ -d "$DSH_CHECKOUT/packages" ]; then
++  CHECKOUT="$DSH_CHECKOUT"
++elif [ -n "${DSH_HOME:-}" ] && [ -d "$DSH_HOME/source/current" ]; then
+   CHECKOUT="$DSH_HOME/source/current"
+ elif [ -d "${HOME:-}/.dsh/source/current" ]; then
+   CHECKOUT="$HOME/.dsh/source/current"
+@@ -48,13 +50,29 @@ mkdir -p node_modules/@deepseek-ai node_modules/@standard-schema
+ if [ ! -e node_modules/@types ]; then
+   ln -sfn "$CHECKOUT/node_modules/@types" node_modules/@types
+ fi
+-link_pkg cordis vendor/cordis
+-link_pkg cosmokit vendor/cosmokit
+-link_pkg schemastery vendor/schemastery
+-link_pkg @deepseek-ai/dsh-agent packages/core/agent
+-link_pkg @deepseek-ai/dsh-commands packages/ui/commands
+-link_pkg @deepseek-ai/dsh-llm packages/llm/llm
+-link_pkg @deepseek-ai/dsh-session packages/core/session
++if [ -n "${DSH_CHECKOUT:-}" ]; then
++  # A sibling checkout is a complete pnpm workspace. Link every scoped DSH
++  # package so local source versions cannot be mixed with npm releases.
++  find "$CHECKOUT/packages" "$CHECKOUT/vendor" "$CHECKOUT/apps" \
++    -type f -name package.json -print | while IFS= read -r manifest; do
++    package_name=$(node -e 'const fs = require("node:fs"); const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(p.name ?? "")' "$manifest")
++    case "$package_name" in
++      @deepseek-ai/*)
++        package_dir=${manifest%/package.json}
++        package_dir=${package_dir#"$CHECKOUT"/}
++        link_pkg "$package_name" "$package_dir"
++        ;;
++    esac
++  done
++else
++  link_pkg @deepseek-ai/cordis vendor/cordis
++  link_pkg @deepseek-ai/cosmokit vendor/cosmokit
++  link_pkg @deepseek-ai/schemastery vendor/schemastery
++  link_pkg @deepseek-ai/dsh-agent packages/core/agent
++  link_pkg @deepseek-ai/dsh-commands packages/ui/commands
++  link_pkg @deepseek-ai/dsh-llm packages/llm/llm
++  link_pkg @deepseek-ai/dsh-session packages/core/session
++fi
+
+ # @standard-schema/spec: external npm types referenced by cordis/schemastery
+ # declarations, hoisted only inside the pnpm store.

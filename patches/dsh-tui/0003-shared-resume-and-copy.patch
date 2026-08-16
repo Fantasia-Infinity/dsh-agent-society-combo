@@ -1,0 +1,335 @@
+diff --git a/scripts/verify-resume-rename-mru.mjs b/scripts/verify-resume-rename-mru.mjs
+index 9df4911..e0655ef 100644
+--- a/scripts/verify-resume-rename-mru.mjs
++++ b/scripts/verify-resume-rename-mru.mjs
+@@ -14,7 +14,8 @@
+  *   3. after the rename the re-listed row carries the NEW title (the rename
+  *      touches MRU, pulling the session into the window) — this is what
+  *      keeps the name visible after a restart too;
+- *   4. last-used.json actually recorded the touch.
++ *   4. a session from another workspace stays visible in the shared picker;
++ *   5. last-used.json actually recorded the touch.
+  * Run with plain node against the compiled lib: `node scripts/verify-resume-rename-mru.mjs`
+  * Exits non-zero on any assertion failure (CI gate).
+  */
+@@ -38,15 +39,28 @@ process.env.USERPROFILE = home
+ const { createChannel } = await import('../lib/types/channel.js')
+
+ const CWD = '/tmp'
++const CROSS_WORKSPACE_CWD = '/other-workspace'
+ const COUNT = 25
+ const ids = Array.from({ length: COUNT }, (_, i) => `s${String(i).padStart(3, '0')}`)
++const archivedId = ids[1]
+ // createdAt ascending: s000 oldest => MRU rank 25, outside the depth-20 window.
+-const headers = ids.map((id, i) => ({ id, cwd: CWD, createdAt: 1000 + i }))
++const headers = ids.map((id, i) => ({
++  id,
++  cwd: i === COUNT - 1 ? CROSS_WORKSPACE_CWD : CWD,
++  createdAt: 1000 + i,
++}))
+
+ for (const [i, id] of ids.entries()) {
+   const dir = join(root, '--work-space--', id)
+   mkdirSync(dir, { recursive: true })
+-  const header = { type: 'session', version: 0, id, createdAt: 1000 + i, cwd: CWD, delegationDepth: 0 }
++  const header = {
++    type: 'session',
++    version: 0,
++    id,
++    createdAt: 1000 + i,
++    cwd: headers[i].cwd,
++    delegationDepth: 0,
++  }
+   const message = { type: 'user/message', seq: 0, time: 1, data: { content: [{ type: 'text', text: `question ${id}` }] } }
+   const title = { type: 'session/title', seq: 1, time: 2, data: { title: `old-${id}` } }
+   const frames = [[header], [message, title]]
+@@ -62,6 +76,7 @@ const ctx = {
+     if (name === 'sessionPersistence') {
+       return { list: async () => headers, load: async () => ({ events: [] }) }
+     }
++    if (name === 'workspaceRegistry') return { archivedSessionIds: [archivedId] }
+     return undefined
+   },
+   logger: { warn() {} },
+@@ -76,14 +91,16 @@ const channel = createChannel(ctx, agent, { model: 'm', cwd: CWD, provider: 'p',
+
+ const target = ids[0] // oldest — MRU rank 25, outside the title window
+ const before = await channel.listSessions()
+-assert.equal(before.length, COUNT, 'all sessions listed')
++assert.equal(before.length, COUNT - 1, 'archived sessions are hidden')
++assert.equal(before.find(r => r.id === archivedId), undefined, 'archived session is hidden')
++assert.equal(before.find(r => r.id === ids[COUNT - 1])?.cwd, CROSS_WORKSPACE_CWD, 'cross-workspace session stays listed')
+ const rowBefore = before.find(r => r.id === target)
+ assert.ok(rowBefore, 'target session is listed')
+ // Sanity: the target really sits outside the title window, so its row shows
+ // the cwd-basename fallback (basename('/tmp')), NOT its persisted old title.
+ assert.equal(rowBefore.title, 'tmp', 'target starts on the basename fallback')
+ assert.equal(before[0].id, ids[COUNT - 1], 'MRU order: newest first')
+-assert.equal(before.findIndex(r => r.id === target), COUNT - 1, 'target is the last row')
++assert.equal(before.findIndex(r => r.id === target), COUNT - 2, 'target is the last visible row')
+
+ // In-window control: the newest session shows its persisted title.
+ assert.equal(before[0].title, `old-${ids[COUNT - 1]}`, 'in-window session shows its log title')
+diff --git a/scripts/verify-session-cwd.mjs b/scripts/verify-session-cwd.mjs
+deleted file mode 100644
+index 6778c10..0000000
+--- a/scripts/verify-session-cwd.mjs
++++ /dev/null
+@@ -1,144 +0,0 @@
+-/**
+- * Session-cwd resolution and /resume filtering verification (issue #96).
+- *
+- * - resolveSessionCwd: explicit config wins; launch subdirectory resolves to
+- *   the git worktree root (both `.git` DIRECTORY clones and `.git` FILE
+- *   linked worktrees/submodules); outside any worktree the launch directory
+- *   itself survives.
+- * - sessionCwdMatches: exact match, plus the symmetric descendant rule —
+- *   pre-upgrade subdirectory sessions stay visible from the root, AND
+- *   workspace-root sessions stay visible after resuming into a
+- *   subdirectory-recorded session (review leftover); sibling subtrees stay
+- *   hidden in both directions, root-recorded ('/') sessions never match,
+- *   Windows separators normalize, and case folding follows the platform's
+- *   filesystem semantics (explicit third argument exercises both modes on
+- *   any host).
+- * - resolveSessionCwd dotfiles guard: a ~/.git (dotfiles repo) must not
+- *   promote $HOME to the workspace (review leftover).
+- *
+- * Run with plain node against the compiled lib: `node scripts/verify-session-cwd.mjs`
+- */
+-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+-import { tmpdir } from 'node:os'
+-import { join } from 'node:path'
+-import { sessionCwdMatches } from '../lib/types/channel.js'
+-import { resolveSessionCwd } from '../lib/types/utils/workspaceRoot.js'
+-
+-let failed = 0
+-function check(name, ok, extra = '') {
+-  console.log(`${ok ? 'PASS' : 'FAIL'}: ${name}${extra ? `  (${extra})` : ''}`)
+-  if (!ok) failed += 1
+-}
+-
+-// --- resolveSessionCwd -----------------------------------------------------
+-const fixture = mkdtempSync(join(tmpdir(), 'dsh-tui-cwd-'))
+-try {
+-  // Plain clone layout: repo/.git is a directory, launch from repo/sub/dir.
+-  const repo = join(fixture, 'repo')
+-  mkdirSync(join(repo, '.git'), { recursive: true })
+-  mkdirSync(join(repo, 'sub', 'dir'), { recursive: true })
+-  // Linked worktree / submodule layout: .git is a FILE (`gitdir: ...`).
+-  const linked = join(fixture, 'linked')
+-  mkdirSync(join(linked, 'pkg'), { recursive: true })
+-  writeFileSync(join(linked, '.git'), 'gitdir: /elsewhere/main/.git/worktrees/linked\n')
+-  // Outside any worktree.
+-  const plain = join(fixture, 'plain')
+-  mkdirSync(plain)
+-
+-  check('explicit config.cwd wins', resolveSessionCwd('/somewhere', repo) === '/somewhere')
+-  check('repo root resolves to itself', resolveSessionCwd(undefined, repo) === repo)
+-  check(
+-    'launch subdirectory resolves to the worktree root',
+-    resolveSessionCwd(undefined, join(repo, 'sub', 'dir')) === repo,
+-  )
+-  check(
+-    'linked worktree (.git file) resolves',
+-    resolveSessionCwd(undefined, join(linked, 'pkg')) === linked,
+-  )
+-  check('outside any worktree the launch directory survives', resolveSessionCwd(undefined, plain) === plain)
+-} finally {
+-  rmSync(fixture, { recursive: true, force: true })
+-}
+-
+-// --- sessionCwdMatches (/resume filter) -------------------------------------
+-check('exact cwd match', sessionCwdMatches('/repo', '/repo'))
+-check('trailing slashes normalize', sessionCwdMatches('/repo/', '/repo//'))
+-check(
+-  'pre-upgrade subdirectory session stays visible',
+-  sessionCwdMatches('/repo', '/repo/packages/app'),
+-)
+-check('deep descendant stays visible', sessionCwdMatches('/repo', '/repo/a/b/c'))
+-check('sibling project stays hidden', !sessionCwdMatches('/repo', '/other/packages/app'))
+-// Resumed-into-subdirectory (review leftover): state.cwd adopted a
+-// pre-upgrade session's recorded subdirectory; its workspace-root sessions
+-// must stay visible, or /resume looks like it lost them.
+-check(
+-  'resumed-into-subdirectory keeps workspace-root sessions visible',
+-  sessionCwdMatches('/repo/packages/app', '/repo'),
+-)
+-check(
+-  'deeply nested state still matches the workspace root',
+-  sessionCwdMatches('/repo/a/b/c', '/repo'),
+-)
+-// …but sibling subtrees stay hidden in BOTH directions.
+-check('sibling subtrees stay hidden (either direction)',
+-  !sessionCwdMatches('/repo/a', '/repo/b') && !sessionCwdMatches('/repo/b', '/repo/a'),
+-)
+-// A session recorded at the filesystem root normalizes to '' and must
+-// never match everything (the '/' edge).
+-check('root-recorded session never matches', !sessionCwdMatches('/repo', '/'))
+-check('root state matches only root-recorded (both empty)', !sessionCwdMatches('/', '/repo'))
+-check(
+-  'prefix-but-not-descendant stays hidden',
+-  !sessionCwdMatches('/repo/app', '/repo/application'),
+-)
+-check('windows separators normalize', sessionCwdMatches('C:\\repo', 'C:/repo/packages/app'))
+-check('empty header cwd never matches', !sessionCwdMatches('/repo', ''))
+-// Case handling follows the platform's filesystem semantics; the explicit
+-// third argument lets both modes be exercised on any host.
+-check(
+-  'case-insensitive mode matches differing case',
+-  sessionCwdMatches('C:/Repo', 'c:\\repo\\packages\\app', true),
+-)
+-check(
+-  'case-sensitive mode keeps case-distinct dirs apart',
+-  !sessionCwdMatches('/Repo', '/repo/packages/app', false),
+-)
+-
+-// --- dotfiles guard (review leftover) --------------------------------------
+-// A dotfiles repo at $HOME (~/.git) must not make the whole home directory
+-// the session workspace: launching from a non-repo directory under home
+-// falls back to the launch directory, and the climb stops at $HOME.
+-const savedHome = process.env.HOME
+-const homeFixture = mkdtempSync(join(tmpdir(), 'dsh-tui-home-'))
+-try {
+-  process.env.HOME = homeFixture
+-  mkdirSync(join(homeFixture, '.git'))                 // dotfiles repo
+-  const proj = join(homeFixture, 'some', 'project')    // itself not a repo
+-  mkdirSync(proj, { recursive: true })
+-  const realProj = join(homeFixture, 'code', 'real')   // a real repo under home
+-  mkdirSync(join(realProj, '.git'), { recursive: true })
+-
+-  check(
+-    'dotfiles ~/.git does not promote $HOME to the workspace',
+-    resolveSessionCwd(undefined, proj) === proj,
+-  )
+-  check(
+-    'launching from $HOME with a dotfiles repo keeps $HOME as plain cwd',
+-    resolveSessionCwd(undefined, homeFixture) === homeFixture,
+-  )
+-  check(
+-    'a real repo under $HOME still resolves normally',
+-    resolveSessionCwd(undefined, realProj) === realProj,
+-  )
+-} finally {
+-  if (savedHome === undefined) delete process.env.HOME
+-  else process.env.HOME = savedHome
+-  rmSync(homeFixture, { recursive: true, force: true })
+-}
+-
+-if (failed > 0) {
+-  console.error(`\n${failed} check(s) failed`)
+-  process.exit(1)
+-}
+-console.log('\nall checks passed')
+diff --git a/src/channel.ts b/src/channel.ts
+index 1dd582c..56e3000 100644
+--- a/src/channel.ts
++++ b/src/channel.ts
+@@ -2159,16 +2159,21 @@ export function createChannel(
+       if (!persistence) return []
+       try {
+         const headers = await persistence.list()
+-        // 按工作目录隔离（Claude Code 的项目维度）：/resume 只列出本会话
+-        // 目录启动的会话，别的项目的会话不出现在选择器里。
+-        const local = headers.filter(header =>
+-          sessionCwdMatches(state.cwd, header.cwd ?? ''),
+-        )
++        // The Web client and TUI share one JSONL store. Keep every persisted
++        // workspace in the picker so selecting a session does not depend on
++        // which directory launched the TUI.
++        // The archive set belongs to the shared Workspace registry, not to a
++        // UI. Filter it here too so /resume has the same visibility rule as
++        // the Web Workspace browser.
++        const workspaceRegistry = ctx.get('workspaceRegistry') as
++          | { archivedSessionIds: readonly SessionId[] }
++          | undefined
++        const archived = new Set(workspaceRegistry?.archivedSessionIds ?? [])
+         // MRU ordering: DSH headers carry only createdAt, so dsh-tui keeps its
+         // own last-used timestamps (touchSession on resume/submit/new) and
+         // falls back to createdAt for sessions never touched in this install.
+         const lastUsed = readLastUsed()
+-        const records = local
++        const records = headers
+           .map(header => ({
+             id: header.id,
+             // Titles load lazily below (first user message); until then the
+@@ -2202,7 +2207,7 @@ export function createChannel(
+           }
+           if (info.title !== undefined) record.title = shortenTitle(info.title)
+         }
+-        return records.filter(record => !empty.has(record.id))
++        return records.filter(record => !empty.has(record.id) && !archived.has(record.id as SessionId))
+       } catch {
+         return []
+       }
+@@ -3412,45 +3417,6 @@ function basename(path: string): string {
+   return parts[parts.length - 1] ?? path
+ }
+
+-/** Normalize a cwd for comparison: forward slashes, no trailing slash; case
+- *  folded when the platform's filesystem semantics are case-insensitive. */
+-function normalizeCwd(path: string, caseInsensitive: boolean): string {
+-  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '')
+-  return caseInsensitive ? normalized.toLowerCase() : normalized
+-}
+-
+-/**
+- * `/resume` project filter (issue #96): exact cwd match, PLUS sessions
+- * recorded in a subdirectory — pre-upgrade launches recorded the launch
+- * subdirectory as the header cwd, and with the cwd default now resolving to
+- * the git worktree root an exact match would hide those sessions forever.
+- * They belong to the same workspace, so they stay listed. Comparison follows
+- * the platform's filesystem semantics (case-insensitive on Windows — a
+- * pre-upgrade header may record `C:\Repo` where the current launch resolves
+- * `c:\repo`). `caseInsensitive` is a parameter (not a platform read) so the
+- * verifier can exercise both modes on any host. Exported for
+- * scripts/verify-session-cwd.mjs.
+- */
+-export function sessionCwdMatches(
+-  stateCwd: string,
+-  headerCwd: string,
+-  caseInsensitive: boolean = process.platform === 'win32',
+-): boolean {
+-  const cwd = normalizeCwd(stateCwd, caseInsensitive)
+-  const recorded = normalizeCwd(headerCwd, caseInsensitive)
+-  if (recorded === '' || cwd === '') return false
+-  return (
+-    recorded === cwd ||
+-    // Pre-upgrade subdirectory session of this workspace.
+-    recorded.startsWith(`${cwd}/`) ||
+-    // Resumed INTO a pre-upgrade subdirectory session (state.cwd adopted its
+-    // recorded subdirectory): the workspace-root sessions it belongs with
+-    // must stay visible, or /resume looks like it lost them for the rest of
+-    // the process lifetime (review leftover).
+-    cwd.startsWith(`${recorded}/`)
+-  )
+-}
+-
+ /** Context-bar token estimate (pi-nano-context: ~4 chars per token). */
+ function estimateTokens(text: string): number {
+   return Math.ceil(text.length / 4)
+diff --git a/src/i18n.ts b/src/i18n.ts
+index 37b1077..e355a09 100644
+--- a/src/i18n.ts
++++ b/src/i18n.ts
+@@ -257,7 +257,7 @@ const dict = {
+
+   // ── components/MessageList.tsx ──────────────────────────────────────
+   'load-earlier': { zh: ' ↑ 加载更早消息（会话日志完整，/export 导出全文） ', en: ' ↑ load earlier messages (full session log; /export for full text) ' },
+-  'resume-none-in-cwd': { zh: '当前目录没有可恢复的历史会话', en: 'No resumable sessions in the current directory' },
++  'resume-none': { zh: '没有可恢复的历史会话', en: 'No resumable sessions found' },
+
+   // ── components/ResumePicker.tsx + screens/Chat.tsx (/resume) ────────
+   'resume-resumed': { zh: '已恢复会话', en: 'Session resumed' },
+diff --git a/src/screens/Chat.tsx b/src/screens/Chat.tsx
+index 7483f44..ad36119 100644
+--- a/src/screens/Chat.tsx
++++ b/src/screens/Chat.tsx
+@@ -619,7 +619,7 @@ export function Chat({
+           const pickable = sessions.filter(session => session.id !== channel.agentId)
+           setResumeSessions(pickable)
+           if (pickable.length === 0) {
+-            channel.notify(t('resume-none-in-cwd'))
++            channel.notify(t('resume-none'))
+             return
+           }
+           setResumeMode('list')

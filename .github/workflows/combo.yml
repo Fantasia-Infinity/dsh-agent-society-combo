@@ -1,0 +1,44 @@
+name: combo
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  patch-matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Clone, patch, and overlay pinned sources
+        shell: bash
+        run: |
+          ROOT="$RUNNER_TEMP/combo-install"
+          node scripts/install.mjs --root "$ROOT" --patch-only
+          test -f "$ROOT/sources/deepseek-harness/packages/core/session/src/types.ts"
+          test -f "$ROOT/sources/dsh-TUI/scripts/run.ts"
+          test -f "$ROOT/sources/agent-society/dsh-plugin/cordis.patch.yml"
+          test -f "$ROOT/sources/dsh-anchored-standard/agent.cordis.yml"
+          grep -q "activity/status" "$ROOT/sources/deepseek-harness/packages/core/session/src/types.ts"
+          grep -q "agent-society-hub-tool-guard" "$ROOT/sources/agent-society/dsh-plugin/cordis.patch.yml"
+          node scripts/doctor.mjs --root "$ROOT" || true
+
+  node-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node --check scripts/install.mjs
+      - run: node --check scripts/doctor.mjs
+      - run: git diff --check

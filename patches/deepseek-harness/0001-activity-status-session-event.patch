@@ -1,0 +1,61 @@
+diff --git a/packages/core/session/src/known-event-types.ts b/packages/core/session/src/known-event-types.ts
+index d65935f1b8..bf05deaf98 100644
+--- a/packages/core/session/src/known-event-types.ts
++++ b/packages/core/session/src/known-event-types.ts
+@@ -17,6 +17,7 @@
+  * consumer exists.
+  */
+ export const KNOWN_SESSION_EVENT_TYPES: ReadonlySet<string> = new Set([
++  'activity/status',
+   'agent-preset/selected',
+   'agent/inbox/spliced',
+   'approval/asked',
+diff --git a/packages/core/session/src/types.ts b/packages/core/session/src/types.ts
+index 17aacd1dfc..fe16054038 100644
+--- a/packages/core/session/src/types.ts
++++ b/packages/core/session/src/types.ts
+@@ -227,6 +227,35 @@ export interface RequestContext {
+  */
+ export type RequestHeaderReason = 'initial' | 'resume' | 'change'
+
++/** Phases published by the optional working-activity UI status producer. */
++export type ActivityPhase = 'idle' | 'waiting' | 'thinking' | 'tool' | 'done'
++
++/**
++ * Log-only working-activity snapshot consumed by interactive UIs.
++ *
++ * The record never enters derived model history. Keeping its vocabulary in the
++ * shared session package lets a Web process read logs written by a TUI process
++ * even when the status-line plugin is not mounted in the Web composition.
++ */
++export interface ActivityStatusEvent {
++  /** Current working phase. */
++  readonly phase: ActivityPhase
++  /** Human-readable status line without terminal control sequences. */
++  readonly line: string
++  /** Short label for the current work, when present. */
++  readonly label?: string
++  /** Detail fragment such as a path, command, or search pattern. */
++  readonly detail?: string
++  /** Optional phrase rendered by the status-line producer. */
++  readonly phrase?: string
++  /** Number of completed tools in the current turn. */
++  readonly toolCount: number
++  /** Milliseconds elapsed since the current turn started. */
++  readonly turnElapsedMs: number
++  /** Epoch milliseconds when the current phase started. */
++  readonly phaseStartedAt: number
++}
++
+ /**
+  * The merge-extensible, append-only source of truth for an agent interaction.
+  * Message history is derived from this log. Every event is lossless JSON and
+@@ -330,6 +359,8 @@ export interface SessionEventMap {
+    * so tolerating concurrent writers needs a signal beyond the log.
+    */
+   'session/end-seed': Record<string, never>
++  /** Log-only UI status; it is never included in derived model history. */
++  'activity/status': ActivityStatusEvent
+ }
+
+ /** The appendable event-type keys of {@link SessionEventMap}, plugin-merged extensions included. */

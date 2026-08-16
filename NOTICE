@@ -1,0 +1,20 @@
+# Third-party notices
+
+This repository does not vendor upstream source code. The installer clones the
+following repositories at the pinned commits recorded in `sources.lock.json`:
+
+- deepseek-harness
+  - https://github.com/deepseek-ai/deepseek-harness
+  - Copyright DeepSeek and contributors
+- dsh-TUI
+  - https://github.com/Fantasia-Infinity/dsh-TUI
+  - Copyright Fantasia-Infinity and contributors
+- AgentSociety
+  - https://github.com/Fantasia-Infinity/AgentSociety
+  - Copyright Fantasia-Infinity and contributors
+- dsh-anchored-standard
+  - https://github.com/xiaobright/dsh-anchored-standard
+  - Copyright xiaobright and contributors
+
+Patch files in `patches/` are derived from local working-tree changes for
+compatibility and remain under the upstream projects' licenses.

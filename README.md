@@ -21,7 +21,7 @@
 | deepseek-harness | `47f943859b` |
 | dsh-TUI | `0e7a899` |
 | AgentSociety | `399a587` |
-| dsh-anchored-standard | `d97bec9` |
+| dsh-anchored-standard | `0a38616` |
 | dsh-opencode-full（可选） | `286972f` |
 
 默认 TUI preset：`anchored-standard`。`standard` / `code` / `minimal` /

@@ -63,7 +63,7 @@
       "repo": "https://github.com/Fantasia-Infinity/AgentSociety.git"
     },
     "dsh-anchored-standard": {
-      "commit": "d97bec9",
+      "commit": "0a38616c1b7ce4219b6d94d95c89f34a90741616",
       "files": [],
       "patches": [],
       "repo": "https://github.com/xiaobright/dsh-anchored-standard.git"

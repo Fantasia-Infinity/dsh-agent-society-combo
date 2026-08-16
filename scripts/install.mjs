@@ -70,6 +70,7 @@ function parseArgs(argv) {
     skipLinks: false,
     skipConfig: false,
     forceBuild: false,
+    update: false,
     dryRun: false,
     yes: false,
   }
@@ -88,6 +89,7 @@ function parseArgs(argv) {
     else if (arg === '--skip-links') result.skipLinks = true
     else if (arg === '--skip-config') result.skipConfig = true
     else if (arg === '--force-build') result.forceBuild = true
+    else if (arg === '--update') result.update = true
     else if (arg === '--dry-run') result.dryRun = true
     else if (arg === '--yes' || arg === '-y') result.yes = true
     else if (arg === '--help' || arg === '-h') {
@@ -115,6 +117,7 @@ Options:
   --skip-links        do not create ~/.dsh and bin links
   --skip-config       do not write default TUI preferences
   --force-build       rebuild even when build markers exist
+  --update            refresh this install to the current sources.lock.json
   --dry-run           print the plan without changing anything`
 }
 
@@ -128,7 +131,7 @@ async function main() {
     printPlan()
     return
   }
-  console.log(`dsh-agent-society-combo installer (root: ${root})`)
+  console.log(`dsh-agent-society-combo installer (root: ${root})${options.update ? ' [update]' : ''}`)
   console.log(`preset: ${options.preset}  dsh-home: ${dshHome}`)
 
   const components = [
@@ -137,8 +140,9 @@ async function main() {
     'agent-society',
     'dsh-anchored-standard',
   ]
+  const changed = new Set()
   for (const name of components) {
-    await installComponent(name)
+    if (await installComponent(name)) changed.add(name)
   }
 
   if (options.patchOnly) {
@@ -150,8 +154,8 @@ async function main() {
   const tui = componentDir('dsh-tui')
   const agentSociety = componentDir('agent-society')
 
-  if (!options.skipDeps) await installDependencies(harness, tui, agentSociety)
-  if (!options.skipBuild) await buildAll(harness, tui, agentSociety)
+  if (!options.skipDeps) await installDependencies(harness, tui, agentSociety, changed)
+  if (!options.skipBuild) await buildAll(harness, tui, agentSociety, changed)
   if (!options.skipLinks) await createLinks(harness, tui, agentSociety)
   if (!options.skipConfig) await writePreferences()
 
@@ -177,7 +181,7 @@ function printPlan() {
   console.log('Plan:')
   for (const name of names) {
     const comp = manifest.components[name]
-    console.log(`  clone ${comp.repo} @ ${comp.commit} -> ${componentDir(name)}`)
+    console.log(`  ensure ${comp.repo} @ ${comp.commit} -> ${componentDir(name)}`)
     for (const patch of comp.patches) console.log(`    apply ${patch.path}`)
   }
   console.log('  link ~/.dsh/plugins/agent-society')
@@ -199,13 +203,16 @@ async function installComponent(name) {
       comp.files.map((file) => [file.dest, file.sha256]),
     ),
   }
+  const previousState = existsSync(stateFile)
+    ? readJson(stateFile)
+    : undefined
   if (
-    existsSync(stateFile) &&
-    JSON.stringify(readJson(stateFile)) === JSON.stringify(desiredState) &&
+    previousState &&
+    JSON.stringify(previousState) === JSON.stringify(desiredState) &&
     existsSync(join(dir, '.git'))
   ) {
     console.log(`[ok] ${name} already at ${comp.commit}`)
-    return
+    return false
   }
 
   if (sourceOverrides.has(name)) {
@@ -220,7 +227,7 @@ async function installComponent(name) {
 
   if (sourceOverrides.has(name)) {
     console.log(`[skip-patch] ${name} uses --source checkout; not applying patches`)
-    return
+    return false
   }
 
   const status = runCapture('git', ['status', '--porcelain'], dir, false)
@@ -230,6 +237,7 @@ async function installComponent(name) {
     )
   }
   runChecked('git', ['reset', '--hard', comp.commit], dir)
+  removeStaleOverlays(dir, previousState?.files, desiredState.files)
   for (const patch of comp.patches) {
     const patchPath = join(comboRoot, patch.path)
     const actual = sha256(patchPath)
@@ -250,6 +258,26 @@ async function installComponent(name) {
   }
   ensureDir(stateRoot)
   writeFileSync(stateFile, `${JSON.stringify(desiredState, null, 2)}\n`)
+  return true
+}
+
+function removeStaleOverlays(dir, previousFiles, desiredFiles) {
+  if (!previousFiles || typeof previousFiles !== 'object') return
+  for (const dest of Object.keys(previousFiles)) {
+    if (Object.prototype.hasOwnProperty.call(desiredFiles, dest)) continue
+    const target = join(dir, dest)
+    if (!existsSync(target)) continue
+    const tracked = runCapture(
+      'git',
+      ['ls-files', '--error-unmatch', '--', dest],
+      dir,
+      false,
+    )
+    if (tracked.status !== 0) {
+      rmSync(target, { force: true })
+      console.log(`[remove] stale overlay ${dest}`)
+    }
+  }
 }
 
 function cloneAtCommit(repo, commit, dir) {
@@ -258,7 +286,7 @@ function cloneAtCommit(repo, commit, dir) {
     if (status.status !== 0 || status.stdout.trim() !== '') {
       throw new Error(`${dir} is dirty; commit or remove it before updating`)
     }
-    runChecked('git', ['fetch', '--quiet', '--depth', '1', 'origin', commit], dir)
+    runChecked('git', ['fetch', '--quiet', 'origin'], dir)
     runChecked('git', ['checkout', '--quiet', commit], dir)
     return
   }
@@ -271,37 +299,25 @@ function cloneAtCommit(repo, commit, dir) {
   runChecked('git', ['checkout', '--quiet', commit], dir)
 }
 
-async function installDependencies(harness, tui, agentSociety) {
-  console.log('[deps] deepseek-harness pnpm install')
-  if (!existsSync(join(harness, 'node_modules', '.pnpm'))) {
-    pnpm(harness, ['install', '--frozen-lockfile'])
-  } else {
-    console.log('[skip] node_modules already present')
-  }
+async function installDependencies(harness, tui, agentSociety, changed) {
+  const installHarness = changed.has('deepseek-harness') || !existsSync(join(harness, 'node_modules', '.pnpm'))
+  console.log(installHarness ? '[deps] deepseek-harness pnpm install' : '[skip] deepseek-harness node_modules current')
+  if (installHarness) pnpm(harness, ['install', '--frozen-lockfile'])
 
-  console.log('[deps] dsh-TUI npm ci')
-  if (!existsSync(join(tui, 'node_modules', 'react'))) {
-    runChecked('npm', ['ci'], tui)
-  } else {
-    console.log('[skip] node_modules already present')
-  }
+  const installTui = changed.has('dsh-tui') || !existsSync(join(tui, 'node_modules', 'react'))
+  console.log(installTui ? '[deps] dsh-TUI npm ci' : '[skip] dsh-TUI node_modules current')
+  if (installTui) runChecked('npm', ['ci'], tui)
 
-  console.log('[deps] AgentSociety agent-host npm ci')
-  if (!existsSync(join(agentSociety, 'agent-host', 'node_modules'))) {
-    runChecked('npm', ['ci'], join(agentSociety, 'agent-host'))
-  } else {
-    console.log('[skip] node_modules already present')
-  }
+  const installAgentHost = changed.has('agent-society') || !existsSync(join(agentSociety, 'agent-host', 'node_modules'))
+  console.log(installAgentHost ? '[deps] AgentSociety agent-host npm ci' : '[skip] agent-host node_modules current')
+  if (installAgentHost) runChecked('npm', ['ci'], join(agentSociety, 'agent-host'))
 
-  console.log('[deps] AgentSociety dsh-plugin npm ci')
-  if (!existsSync(join(agentSociety, 'dsh-plugin', 'node_modules', 'typescript'))) {
-    runChecked('npm', ['ci'], join(agentSociety, 'dsh-plugin'))
-  } else {
-    console.log('[skip] node_modules already present')
-  }
+  const installPlugin = changed.has('agent-society') || !existsSync(join(agentSociety, 'dsh-plugin', 'node_modules', 'typescript'))
+  console.log(installPlugin ? '[deps] AgentSociety dsh-plugin npm ci' : '[skip] dsh-plugin node_modules current')
+  if (installPlugin) runChecked('npm', ['ci'], join(agentSociety, 'dsh-plugin'))
 }
 
-async function buildAll(harness, tui, agentSociety) {
+async function buildAll(harness, tui, agentSociety, changed) {
   const harnessBin = join(harness, 'apps', 'cli', 'lib', 'bin.js')
   const bootLib = join(harness, 'packages', 'boot', 'app-boot', 'lib', 'index.js')
   // Client-face packages (@deepseek-ai/dsh-typert-registry,
@@ -311,6 +327,7 @@ async function buildAll(harness, tui, agentSociety) {
   const clientLib = join(harness, 'packages', 'api', 'gateway', 'lib', 'index.js')
   if (
     options.forceBuild ||
+    changed.has('deepseek-harness') ||
     !existsSync(harnessBin) ||
     !existsSync(bootLib) ||
     !existsSync(clientLib)
@@ -322,7 +339,7 @@ async function buildAll(harness, tui, agentSociety) {
   }
 
   const tuiPlugin = join(tui, 'lib', 'types', 'plugin.js')
-  if (options.forceBuild || !existsSync(tuiPlugin)) {
+  if (options.forceBuild || changed.has('dsh-tui') || !existsSync(tuiPlugin)) {
     console.log('[build] dsh-TUI')
     if (platform() === 'win32') {
       const bash = which('bash')

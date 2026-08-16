@@ -57,6 +57,7 @@ curl -fsSL .../install.sh | bash -s -- \
 | `--skip-links` | 关闭 | 不写 `~/.dsh` 与 bin 链接 |
 | `--skip-config` | 关闭 | 不写 `~/.dsh-tui/agent-preset.json` |
 | `--force-build` | 关闭 | 即使已有构建产物也重新构建 |
+| `--update` | 关闭 | 按当前 lock 更新已安装组件，变化项自动重装依赖与构建 |
 | `--dry-run` | 关闭 | 只打印安装计划 |
 
 环境变量：
@@ -81,13 +82,33 @@ dsh-tui                                # 直接启动 dsh-TUI
 
 ## 更新组合
 
+一条命令更新，其实就是重新跑安装器；它会先拉取 combo repo 的最新
+`sources.lock.json`：
+
 ```bash
-node "$(COMBO_ROOT)/scripts/install.mjs" ...
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society-combo/main/install.sh \
+  | bash -s -- --update --root "$HOME/.local/share/dsh-agent-society-combo"
+
+# Windows PowerShell
+irm https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society-combo/main/install.ps1 | iex
 ```
 
-更稳妥的方式是重新运行安装命令；安装器对每个组件比对
-`commit + patch SHA + file SHA`，只有变化时才重新 clone/checkout/patch。
-受管源码目录如有本地改动会拒绝覆盖。
+更新逻辑：
+
+1. 对比每个组件的 `commit + patch SHA + overlay file SHA`；
+2. 仅对变化组件执行 `fetch/checkout → reset --hard → patch → overlay`；
+3. 变化组件的依赖会重新 `pnpm install` / `npm ci`；
+4. 变化组件的构建产物会强制重建，不再因旧 `lib/` 存在而跳过；
+5. 删除已经从 manifest 移除的旧 overlay 文件；
+6. 重新建立 `~/.dsh` 与 bin 链接。
+
+受管源码目录如有本地改动会拒绝覆盖。只预览：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society-combo/main/install.sh \
+  | bash -s -- --dry-run --root "$HOME/.local/share/dsh-agent-society-combo"
+```
 
 ## 诊断
 

@@ -6,6 +6,7 @@
 - [dsh-TUI](https://github.com/Fantasia-Infinity/dsh-TUI)
 - [AgentSociety](https://github.com/Fantasia-Infinity/AgentSociety)
 - [dsh-anchored-standard](https://github.com/xiaobright/dsh-anchored-standard)
+- [dsh-opencode-full](https://github.com/Fantasia-Infinity/dsh-opencode-full)（可选，`--with-opencode-full`）
 
 本仓库不包含上述仓库的源码，只记录经过验证的 commit、必要的 patch、
 文件覆盖层和安装器。所有 patch 都在安装时应用到受管 checkout，上游仓库
@@ -19,8 +20,9 @@
 |---|---|
 | deepseek-harness | `47f943859b` |
 | dsh-TUI | `0e7a899` |
-| AgentSociety | `bba5cdc` |
+| AgentSociety | `399a587` |
 | dsh-anchored-standard | `d97bec9` |
+| dsh-opencode-full（可选） | `82ecfe4` |
 
 默认 TUI preset：`anchored-standard`。`standard` / `code` / `minimal` /
 `cordis` 仍保留可选（安装时 `--preset standard`，或 TUI 内 `/preset`）。
@@ -83,6 +85,7 @@ curl -fsSL .../install.sh | bash -s -- \
 | `--force-build` | 关闭 | 即使已有构建产物也重新构建 |
 | `--update` | 关闭 | 按当前 lock 更新已安装组件，变化项自动重装依赖与构建 |
 | `--with-ssh [spec]` | 关闭 | 向 `agent-society-web` profile 追加 SSH 运维插件，默认 `dsh-ssh-ops@0.2.1` |
+| `--with-opencode-full` | 关闭 | 安装 dsh-opencode-full bundle，并把 web profile 默认 preset 切换为 `opencode-full` |
 | `--dry-run` | 关闭 | 只打印安装计划 |
 
 环境变量：
@@ -91,6 +94,7 @@ curl -fsSL .../install.sh | bash -s -- \
 COMBO_ROOT=~/.local/share/dsh-agent-society-combo
 COMBO_PRESET=anchored-standard
 COMBO_BIN=~/.local/bin
+COMBO_OPENCODE_FULL=0
 DSH_HOME=~/.dsh
 ```
 
@@ -142,6 +146,28 @@ irm https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society-combo/
 curl -fsSL https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society-combo/main/install.sh \
   | bash -s -- --dry-run --root "$HOME/.local/share/dsh-agent-society-combo"
 ```
+
+## OpenCode Full 插件
+
+可选安装 [dsh-opencode-full](https://github.com/Fantasia-Infinity/dsh-opencode-full)：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society-combo/main/install.sh \
+  | bash -s -- --with-opencode-full
+```
+
+安装后 `agent-society-web` 默认使用 `opencode-full` preset，补齐：
+
+- `web_fetch`：抓取并阅读网页正文
+- `lsp`：`goToDefinition` / `findReferences` / `goToImplementation` / `hover`
+- `apply_patch`：OpenCode 风格 patch，基于 `git apply --check/apply`
+- 全量工具默认常驻，不再需要 `dev_tool_search` 解锁
+- 只读 `subagent_explore`
+
+安装器会探测本机的 `typescript-language-server` / `pyright-langserver` /
+`vscode-json-languageserver` 并写入 profile patch；没有 language server 时
+`lsp` 工具会返回 `LSP_UNAVAILABLE`，但 profile 可以正常启动。
+`--with-opencode-full` 与 `--with-ssh` 可叠加。
 
 ## 可选 SSH 运维插件
 

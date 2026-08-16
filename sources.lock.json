@@ -1,12 +1,6 @@
 {
   "checksums": {},
   "components": {
-    "agent-society": {
-      "commit": "399a587",
-      "files": [],
-      "patches": [],
-      "repo": "https://github.com/Fantasia-Infinity/AgentSociety.git"
-    },
     "deepseek-harness": {
       "commit": "47f943859b",
       "files": [
@@ -27,12 +21,6 @@
         }
       ],
       "repo": "https://github.com/deepseek-ai/deepseek-harness.git"
-    },
-    "dsh-anchored-standard": {
-      "commit": "d97bec9",
-      "files": [],
-      "patches": [],
-      "repo": "https://github.com/xiaobright/dsh-anchored-standard.git"
     },
     "dsh-tui": {
       "commit": "0e7a899",
@@ -67,6 +55,24 @@
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/dsh-TUI.git"
+    },
+    "agent-society": {
+      "commit": "399a587",
+      "files": [],
+      "patches": [],
+      "repo": "https://github.com/Fantasia-Infinity/AgentSociety.git"
+    },
+    "dsh-anchored-standard": {
+      "commit": "d97bec9",
+      "files": [],
+      "patches": [],
+      "repo": "https://github.com/xiaobright/dsh-anchored-standard.git"
+    },
+    "dsh-opencode-full": {
+      "commit": "82ecfe4d9d77766e96be45c413360ade7ab60ab6",
+      "files": [],
+      "patches": [],
+      "repo": "https://github.com/Fantasia-Infinity/dsh-opencode-full.git"
     }
   },
   "defaultPreset": "anchored-standard",

@@ -32,12 +32,16 @@ function file(path) {
 }
 
 const manifest = JSON.parse(readFileSync(join(comboRoot, 'sources.lock.json'), 'utf8'))
+const OPTIONAL_COMPONENTS = new Set(['dsh-opencode-full'])
 for (const [name, comp] of Object.entries(manifest.components)) {
   const dir = join(root, 'sources', name)
   const state = join(root, 'state', `${name}.json`)
-  check(`${name} checkout`, existsSync(join(dir, '.git')), dir)
+  const optional = OPTIONAL_COMPONENTS.has(name)
+  const checkout = existsSync(join(dir, '.git'))
+  if (optional && !checkout && !existsSync(state)) continue
+  check(`${name} checkout`, checkout, dir)
   check(`${name} state`, existsSync(state), state)
-  if (existsSync(dir)) {
+  if (checkout) {
     const result = spawnSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' })
     const actual = result.stdout.trim()
     check(
@@ -66,6 +70,26 @@ const workerProfile = join(dshHome, 'profiles', 'agent-society-worker', 'package
 check('agent-society-worker profile', existsSync(workerProfile), workerProfile)
 const webProfile = join(dshHome, 'profiles', 'agent-society-web', 'package.json')
 check('agent-society-web profile', existsSync(webProfile), webProfile)
+let webProfileManifest
+if (existsSync(webProfile)) {
+  try {
+    webProfileManifest = JSON.parse(readFileSync(webProfile, 'utf8'))
+  } catch {
+    webProfileManifest = undefined
+  }
+}
+const openCodeFullInstalled = Boolean(
+  webProfileManifest?.dependencies?.['@fantasia-infinity/dsh-opencode-full'],
+)
+if (openCodeFullInstalled) {
+  const openCodeFullPreset = join(dshHome, '.agent-presets', 'opencode-full', 'agent.cordis.yml')
+  check('dsh-opencode-full preset', existsSync(openCodeFullPreset), openCodeFullPreset)
+  check(
+    'dsh-opencode-full web bundle',
+    webProfileManifest?.dsh?.profile?.bundles?.includes('@fantasia-infinity/dsh-opencode-full'),
+    webProfile,
+  )
+}
 const pref = join(home, '.dsh-tui', 'agent-preset.json')
 check('dsh-tui default preset', existsSync(pref), pref)
 

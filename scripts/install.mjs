@@ -304,9 +304,19 @@ async function installDependencies(harness, tui, agentSociety) {
 async function buildAll(harness, tui, agentSociety) {
   const harnessBin = join(harness, 'apps', 'cli', 'lib', 'bin.js')
   const bootLib = join(harness, 'packages', 'boot', 'app-boot', 'lib', 'index.js')
-  if (options.forceBuild || !existsSync(harnessBin) || !existsSync(bootLib)) {
-    console.log('[build] deepseek-harness build:lib:host')
-    pnpm(harness, ['run', 'build:lib:host'])
+  // Client-face packages (@deepseek-ai/dsh-typert-registry,
+  // @deepseek-ai/dsh-api-gateway, ...) are emitted only by the Client pass;
+  // the dsh-TUI bundle rows load them at boot, so the full build:lib
+  // (host + client passes) is required for a working TUI.
+  const clientLib = join(harness, 'packages', 'api', 'gateway', 'lib', 'index.js')
+  if (
+    options.forceBuild ||
+    !existsSync(harnessBin) ||
+    !existsSync(bootLib) ||
+    !existsSync(clientLib)
+  ) {
+    console.log('[build] deepseek-harness build:lib (host + client passes)')
+    pnpm(harness, ['run', 'build:lib'])
   } else {
     console.log('[skip] deepseek-harness already built')
   }
@@ -367,6 +377,29 @@ async function createLinks(harness, tui, agentSociety) {
     linkExecutable(join(harness, 'apps', 'cli', 'lib', 'bin.js'), join(binDir, 'dsh'))
     linkExecutable(join(tui, 'bin', 'dsh-tui-local.js'), join(binDir, 'dsh-tui'))
     linkExecutable(join(agentSociety, 'agent'), join(binDir, 'agent'))
+  }
+
+  // agent-host resolves its sibling dsh-TUI checkout by the canonical repo
+  // name `dsh-TUI` (cli.ts runDshTui), while this installer keeps the
+  // component at `sources/dsh-tui`. On case-sensitive filesystems (Linux)
+  // that lookup misses and `agent` silently falls back to the Pi TUI.
+  // Mirror the canonical name. macOS/Windows filesystems are
+  // case-insensitive, so the guard below simply no-ops there.
+  if (platform() !== 'win32') {
+    const tuiAlias = join(sourcesRoot, 'dsh-TUI')
+    const tuiDir = componentDir('dsh-tui')
+    if (!existsSync(tuiAlias) && !isLink(tuiAlias)) {
+      try {
+        symlinkSync(tuiDir, tuiAlias, 'dir')
+        console.log(`[link] ${tuiAlias} -> ${tuiDir}`)
+      } catch (error) {
+        console.warn(
+          `[warn] could not create ${tuiAlias}: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+    } else {
+      console.log(`[keep] ${tuiAlias} already exists`)
+    }
   }
 
   console.log('[profile] agent-society-worker')
@@ -470,8 +503,14 @@ function copyPreset(source, dest) {
   rmSync(dest, { recursive: true, force: true })
   ensureDir(dest)
   for (const name of required) {
-    const src = join(source, name)
-    if (!existsSync(src)) throw new Error(`preset file missing: ${src}`)
+    const direct = join(source, name)
+    const nested = join(source, 'preset', name)
+    const src = existsSync(direct)
+      ? direct
+      : existsSync(nested)
+        ? nested
+        : undefined
+    if (!src) throw new Error(`preset file missing: ${direct} (or ${nested})`)
     copyFileSync(src, join(dest, name))
   }
 }
@@ -495,7 +534,7 @@ function which(name) {
     platform() === 'win32' ? 'where' : 'which',
     [name],
     comboRoot,
-    true,
+    false,
   )
   if (result.status !== 0) return undefined
   return result.stdout.trim().split(/\r?\n/u)[0] || undefined

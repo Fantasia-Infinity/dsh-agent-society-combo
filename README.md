@@ -19,7 +19,7 @@
 |---|---|
 | deepseek-harness | `47f943859b` |
 | dsh-TUI | `0e7a899` |
-| AgentSociety | `e7b03e4` |
+| AgentSociety | `2b20e66` |
 | dsh-anchored-standard | `d97bec9` |
 
 默认 TUI preset：`anchored-standard`。`standard` / `code` / `minimal` /

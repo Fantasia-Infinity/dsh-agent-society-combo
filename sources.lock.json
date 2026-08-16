@@ -2,7 +2,7 @@
   "checksums": {},
   "components": {
     "agent-society": {
-      "commit": "e7b03e4",
+      "commit": "a665f72",
       "files": [],
       "patches": [],
       "repo": "https://github.com/Fantasia-Infinity/AgentSociety.git"

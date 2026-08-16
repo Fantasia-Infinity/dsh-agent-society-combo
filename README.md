@@ -82,6 +82,7 @@ curl -fsSL .../install.sh | bash -s -- \
 | `--skip-config` | 关闭 | 不写 `~/.dsh-tui/agent-preset.json` |
 | `--force-build` | 关闭 | 即使已有构建产物也重新构建 |
 | `--update` | 关闭 | 按当前 lock 更新已安装组件，变化项自动重装依赖与构建 |
+| `--with-ssh [spec]` | 关闭 | 安装 dsh-web SSH 运维 profile，默认 `dsh-ssh-ops@0.2.1` |
 | `--dry-run` | 关闭 | 只打印安装计划 |
 
 环境变量：
@@ -133,6 +134,44 @@ irm https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society-combo/
 curl -fsSL https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society-combo/main/install.sh \
   | bash -s -- --dry-run --root "$HOME/.local/share/dsh-agent-society-combo"
 ```
+
+## 可选 SSH 运维插件
+
+DeepSeek Harness 上游没有内置 SSH 工具；combo 可选安装社区维护的
+dsh-web SSH 插件，生成独立 profile：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society-combo/main/install.sh \
+  | bash -s -- --with-ssh
+```
+
+默认安装：
+
+```text
+dsh-ssh-ops@0.2.1 → profile agent-society-web
+```
+
+启动：
+
+```bash
+dsh-web-ops
+# 或
+dsh --profile agent-society-web
+```
+
+切换插件版本：
+
+```bash
+# 另一个实现：@linxin666/dsh-ssh
+curl -fsSL .../install.sh | bash -s -- --with-ssh '@linxin666/dsh-ssh@0.1.18'
+```
+
+说明：
+
+- 两者都面向 dsh Web GUI，不进入 dsh-TUI / worker profile；
+- `dsh-ssh-ops` 把秘密保存在 dsh 官方凭据库，并对 Agent 输出做脱敏；
+- `@linxin666/dsh-ssh` 支持 `~/.ssh/config` 导入、ProxyJump、集群执行等；
+- SSH 密码/私钥仍属于本机敏感数据，profile 安装不保存任何真实凭据。
 
 ## 诊断
 

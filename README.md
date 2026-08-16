@@ -82,7 +82,7 @@ curl -fsSL .../install.sh | bash -s -- \
 | `--skip-config` | 关闭 | 不写 `~/.dsh-tui/agent-preset.json` |
 | `--force-build` | 关闭 | 即使已有构建产物也重新构建 |
 | `--update` | 关闭 | 按当前 lock 更新已安装组件，变化项自动重装依赖与构建 |
-| `--with-ssh [spec]` | 关闭 | 安装 dsh-web SSH 运维 profile，默认 `dsh-ssh-ops@0.2.1` |
+| `--with-ssh [spec]` | 关闭 | 向 `agent-society-web` profile 追加 SSH 运维插件，默认 `dsh-ssh-ops@0.2.1` |
 | `--dry-run` | 关闭 | 只打印安装计划 |
 
 环境变量：
@@ -101,9 +101,14 @@ export PATH="$HOME/.local/bin:$PATH"   # Windows 加入用户 PATH
 agent doctor
 agent setup                            # 模型 / Hub 凭据（只写本机）
 agent                                  # dsh-TUI，回退 Pi
+agent web                              # dsh Web UI（默认 http://127.0.0.1:3080）
 agent worker                           # dsh plugin worker，回退 Pi
 dsh-tui                                # 直接启动 dsh-TUI
+dsh-web                                # 直接启动 agent-society-web profile
 ```
+
+TUI 与 Web 是同一个 dsh core 上的两个 UI adapter，共享
+`~/.dsh/sessions`、插件、preset 与模型凭据。
 
 ## 更新组合
 
@@ -126,9 +131,12 @@ irm https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society-combo/
 3. 变化组件的依赖会重新 `pnpm install` / `npm ci`；
 4. 变化组件的构建产物会强制重建，不再因旧 `lib/` 存在而跳过；
 5. 删除已经从 manifest 移除的旧 overlay 文件；
-6. 重新建立 `~/.dsh` 与 bin 链接。
+6. 重新建立 `~/.dsh` 与 bin 链接，并重写 `agent-society-web` profile
+   （`--with-ssh` 时把 SSH 插件一并写回）。
 
-受管源码目录如有本地改动会拒绝覆盖。只预览：
+受管源码目录如有本地改动，更新时会把旧 checkout 完整备份为
+`sources/<组件>.pre-update-<时间戳>`，再从 lock 重新 clone；不会覆盖删除。
+只预览：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society-combo/main/install.sh \
@@ -137,26 +145,38 @@ curl -fsSL https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society
 
 ## 可选 SSH 运维插件
 
-DeepSeek Harness 上游没有内置 SSH 工具；combo 可选安装社区维护的
-dsh-web SSH 插件，生成独立 profile：
+安装器默认就会创建 Web core profile：
+
+```text
+agent-society-web:
+  @deepseek-ai/dsh-base
+  @deepseek-ai/dsh-web-app
+  @agent-society/dsh-agent-society   # AgentSociety 核心（Hub 工具 / web_search guard）
+```
+
+它和 `agent-society-worker`、TUI 外部 bundle 消费同一份 AgentSociety 插件，
+session 也共用 `$DSH_HOME/sessions`。`agent web` 或 `dsh-web` 直接启动。
+
+DeepSeek Harness 上游没有内置 SSH 工具；combo 可选向该 profile 追加社区维护的
+SSH 插件：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society-combo/main/install.sh \
   | bash -s -- --with-ssh
 ```
 
-默认安装：
+默认追加：
 
 ```text
-dsh-ssh-ops@0.2.1 → profile agent-society-web
+dsh-ssh-ops@0.2.1 → bundles of agent-society-web
 ```
 
-启动：
+启动（SSH 插件只在带 `--with-ssh` 安装时存在）：
 
 ```bash
-dsh-web-ops
-# 或
-dsh --profile agent-society-web
+agent web           # core Web UI
+dsh-web             # 同上，直接启动 profile
+dsh-web-ops         # --with-ssh 后可用；同 profile，多出的只是 SSH 插件
 ```
 
 切换插件版本：
@@ -171,7 +191,8 @@ curl -fsSL .../install.sh | bash -s -- --with-ssh '@linxin666/dsh-ssh@0.1.18'
 - 两者都面向 dsh Web GUI，不进入 dsh-TUI / worker profile；
 - `dsh-ssh-ops` 把秘密保存在 dsh 官方凭据库，并对 Agent 输出做脱敏；
 - `@linxin666/dsh-ssh` 支持 `~/.ssh/config` 导入、ProxyJump、集群执行等；
-- SSH 密码/私钥仍属于本机敏感数据，profile 安装不保存任何真实凭据。
+- SSH 密码/私钥仍属于本机敏感数据，profile 安装不保存任何真实凭据；
+- 重新执行不带 `--with-ssh` 的安装会移除 profile 里的 SSH bundle。
 
 ## 诊断
 
@@ -183,7 +204,7 @@ node ~/.local/share/dsh-agent-society-combo/scripts/install.mjs --dry-run
 
 ## 数据归属
 
-安装后三个入口共享同一 `$DSH_HOME`：
+安装后 TUI / Web / worker 三个入口共享同一 `$DSH_HOME`：
 
 - session 日志：`~/.dsh/sessions`
 - 凭据与设置：`~/.dsh/.credentials.yaml` / `~/.dsh/settings.yaml`

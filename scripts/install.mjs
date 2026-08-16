@@ -16,6 +16,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -122,7 +123,8 @@ Options:
   --skip-config       do not write default TUI preferences
   --force-build       rebuild even when build markers exist
   --update            refresh this install to the current sources.lock.json
-  --with-ssh [spec]   install a dsh-web SSH ops profile (default dsh-ssh-ops@0.2.1)
+  --with-ssh [spec]   add an SSH ops plugin to the agent-society-web profile
+                      (default dsh-ssh-ops@0.2.1)
   --dry-run           print the plan without changing anything`
 }
 
@@ -161,8 +163,15 @@ async function main() {
 
   if (!options.skipDeps) await installDependencies(harness, tui, agentSociety, changed)
   if (!options.skipBuild) await buildAll(harness, tui, agentSociety, changed)
-  if (!options.skipLinks) await createLinks(harness, tui, agentSociety)
-  if (options.withSsh) await installSshProfile(harness)
+  if (!options.skipLinks) {
+    await createLinks(harness, tui, agentSociety)
+    await ensureWebProfile(
+      harness,
+      agentSociety,
+      options.withSsh ? options.sshPlugin : undefined,
+      options.preset,
+    )
+  }
   if (!options.skipConfig) await writePreferences()
 
   console.log('')
@@ -194,7 +203,7 @@ function printPlan() {
   console.log('  copy ~/.dsh/.agent-presets/anchored-standard')
   console.log('  write ~/.dsh-tui/agent-preset.json = ' + options.preset)
   console.log('  links: dsh, dsh-tui, agent')
-  if (options.withSsh) console.log(`  ssh profile: ${options.sshPlugin}`)
+  console.log(`  web profile: agent-society-web (core dsh-agent-society, preset ${options.preset})` + (options.withSsh ? ` + ${options.sshPlugin}` : ''))
 }
 
 async function installComponent(name) {
@@ -229,7 +238,7 @@ async function installComponent(name) {
   } else {
     console.log(`[clone] ${comp.repo} @ ${comp.commit}`)
     ensureDir(dirname(dir))
-    cloneAtCommit(comp.repo, comp.commit, dir)
+    cloneAtCommit(comp.repo, comp.commit, dir, Boolean(previousState))
   }
 
   if (sourceOverrides.has(name)) {
@@ -287,15 +296,21 @@ function removeStaleOverlays(dir, previousFiles, desiredFiles) {
   }
 }
 
-function cloneAtCommit(repo, commit, dir) {
+function cloneAtCommit(repo, commit, dir, managed = false) {
   if (existsSync(join(dir, '.git'))) {
     const status = runCapture('git', ['status', '--porcelain'], dir, false)
     if (status.status !== 0 || status.stdout.trim() !== '') {
-      throw new Error(`${dir} is dirty; commit or remove it before updating`)
+      if (!managed) {
+        throw new Error(`${dir} is dirty; commit or remove it before updating`)
+      }
+      const backup = `${dir}.pre-update-${Date.now()}`
+      console.warn(`[backup] ${dir} has local changes; preserving at ${backup}`)
+      renameSync(dir, backup)
+    } else {
+      runChecked('git', ['fetch', '--quiet', 'origin'], dir)
+      runChecked('git', ['checkout', '--quiet', commit], dir)
+      return
     }
-    runChecked('git', ['fetch', '--quiet', 'origin'], dir)
-    runChecked('git', ['checkout', '--quiet', commit], dir)
-    return
   }
   rmSync(dir, { recursive: true, force: true })
   runChecked(
@@ -343,6 +358,21 @@ async function buildAll(harness, tui, agentSociety, changed) {
     pnpm(harness, ['run', 'build:lib'])
   } else {
     console.log('[skip] deepseek-harness already built')
+  }
+
+  // The agent-society-web profile mounts the browser surface, which resolves
+  // @deepseek-ai/dsh-web-frontend/dist/index.html. build:lib alone does not
+  // emit that dist, so the web UI would boot and then fail on first request.
+  const webDist = join(harness, 'apps', 'web', 'dist', 'index.html')
+  if (
+    options.forceBuild ||
+    changed.has('deepseek-harness') ||
+    !existsSync(webDist)
+  ) {
+    console.log('[build] deepseek-harness build:web (browser frontend)')
+    pnpm(harness, ['run', 'build:web'])
+  } else {
+    console.log('[skip] deepseek-harness web dist already built')
   }
 
   const tuiPlugin = join(tui, 'lib', 'types', 'plugin.js')
@@ -445,30 +475,39 @@ async function createLinks(harness, tui, agentSociety) {
   }
 }
 
-async function installSshProfile(harness) {
-  const profile = process.env.COMBO_SSH_PROFILE || 'agent-society-web'
-  const spec = options.sshPlugin
-  const at = spec.lastIndexOf('@')
-  const pluginName = at > 0 ? spec.slice(0, at) : spec
-  const version = at > 0 ? spec.slice(at + 1) : undefined
-  if (!pluginName) throw new Error('--with-ssh requires a plugin package name')
+async function ensureWebProfile(harness, agentSociety, sshSpec, preset) {
+  const profile =
+    process.env.COMBO_WEB_PROFILE ||
+    process.env.COMBO_SSH_PROFILE ||
+    'agent-society-web'
+  const pluginSource = join(agentSociety, 'dsh-plugin')
+  const corePlugin = '@agent-society/dsh-agent-society'
+  const dependencies = {
+    [corePlugin]: `link:${pluginSource}`,
+  }
+  const bundles = [
+    '@deepseek-ai/dsh-base',
+    '@deepseek-ai/dsh-web-app',
+    corePlugin,
+  ]
+  let sshName
+  if (sshSpec) {
+    const at = sshSpec.lastIndexOf('@')
+    sshName = at > 0 ? sshSpec.slice(0, at) : sshSpec
+    const version = at > 0 ? sshSpec.slice(at + 1) : undefined
+    if (!sshName) throw new Error('--with-ssh requires a plugin package name')
+    if (version) dependencies[sshName] = version
+    bundles.push(sshName)
+  }
   const profileDir = join(dshHome, 'profiles', profile)
-  console.log(`[ssh] profile ${profile} plugin ${spec}`)
+  console.log(`[web] profile ${profile} core=${corePlugin} preset=${preset}${sshName ? ` ssh=${sshName}` : ''}`)
   ensureDir(profileDir)
   ensureDir(binDir)
   const packageJson = {
     name: `dsh-profile-${profile}`,
     private: true,
-    ...(version ? { dependencies: { [pluginName]: version } } : {}),
-    dsh: {
-      profile: {
-        bundles: [
-          '@deepseek-ai/dsh-base',
-          '@deepseek-ai/dsh-web-app',
-          pluginName,
-        ],
-      },
-    },
+    dependencies,
+    dsh: { profile: { bundles } },
   }
   writeFileSync(
     join(profileDir, 'package.json'),
@@ -476,9 +515,20 @@ async function installSshProfile(harness) {
   )
   writeFileSync(
     join(profileDir, 'pnpm-workspace.yaml'),
-    `packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\nallowBuilds:\n  cpu-features: true\n  ssh2: true\n`,
+    sshName
+      ? `packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\nallowBuilds:\n  cpu-features: true\n  ssh2: true\n`
+      : `packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n`,
   )
   writeFileSync(join(profileDir, 'cordis.yml'), '# generated by dsh-agent-society-combo\n[]\n')
+  const patchFile = join(profileDir, 'cordis.patch.yml')
+  if (!existsSync(patchFile)) {
+    writeFileSync(
+      patchFile,
+      `# generated by dsh-agent-society-combo — user patch layer for ${profile}\n- id: agent-presets\n  name: '@deepseek-ai/dsh-agent-presets'\n  config:\n    default: ${preset}\n`,
+    )
+  } else {
+    console.log(`[web] keep existing user patch ${patchFile}`)
+  }
   pnpm(profileDir, ['install'])
   const probe = runCapture(
     process.execPath,
@@ -486,21 +536,27 @@ async function installSshProfile(harness) {
     comboRoot,
     false,
   )
-  if (probe.status === 0 && probe.stdout.includes(pluginName)) {
-    console.log(`[ssh] ${pluginName} registered in profile ${profile}`)
+  if (probe.status === 0 && probe.stdout.includes(corePlugin)) {
+    console.log(`[web] ${corePlugin} registered in profile ${profile}`)
   } else {
-    console.warn(`[warn] could not verify ${pluginName} in profile ${profile}`)
+    console.warn(`[warn] could not verify ${corePlugin} in profile ${profile}`)
+  }
+  if (sshName && probe.status === 0 && probe.stdout.includes(sshName)) {
+    console.log(`[ssh] ${sshName} registered in profile ${profile}`)
   }
   if (platform() === 'win32') {
-    writeCmd('dsh-web-ops', ['node', join(harness, 'apps', 'cli', 'lib', 'bin.js'), '--profile', profile])
+    writeCmd('dsh-web', ['node', join(harness, 'apps', 'cli', 'lib', 'bin.js'), '--profile', profile])
+    if (sshName) writeCmd('dsh-web-ops', ['node', join(harness, 'apps', 'cli', 'lib', 'bin.js'), '--profile', profile])
   } else {
-    const wrapper = join(binDir, 'dsh-web-ops')
-    if (!existsSync(wrapper) && !isLink(wrapper)) {
-      writeFileSync(
-        wrapper,
-        `#!/bin/sh\nexec node ${JSON.stringify(join(harness, 'apps', 'cli', 'lib', 'bin.js'))} --profile ${profile} "$@"\n`,
-        { mode: 0o755 },
-      )
+    for (const name of sshName ? ['dsh-web', 'dsh-web-ops'] : ['dsh-web']) {
+      const wrapper = join(binDir, name)
+      if (!existsSync(wrapper) && !isLink(wrapper)) {
+        writeFileSync(
+          wrapper,
+          `#!/bin/sh\nexec node ${JSON.stringify(join(harness, 'apps', 'cli', 'lib', 'bin.js'))} --profile ${profile} "$@"\n`,
+          { mode: 0o755 },
+        )
+      }
     }
   }
 }

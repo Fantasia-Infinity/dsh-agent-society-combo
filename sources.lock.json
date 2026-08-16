@@ -2,7 +2,7 @@
   "checksums": {},
   "components": {
     "agent-society": {
-      "commit": "bba5cdc",
+      "commit": "c8665f4",
       "files": [],
       "patches": [],
       "repo": "https://github.com/Fantasia-Infinity/AgentSociety.git"
@@ -60,6 +60,10 @@
         {
           "path": "patches/dsh-tui/0004-build-against-sibling-checkout.patch",
           "sha256": "b84a834ff48dba28347c1f9c8cd88425a1636a3f52246ead40875c29976a027f"
+        },
+        {
+          "path": "patches/dsh-tui/0005-sync-package-lock.patch",
+          "sha256": "8c27b9201293ed1d9bd9312285ece96a72526fa51f85f6ecba015324f613de4b"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/dsh-TUI.git"

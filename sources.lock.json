@@ -2,7 +2,7 @@
   "checksums": {},
   "components": {
     "deepseek-harness": {
-      "commit": "47f943859b",
+      "commit": "e181408c9aa99a6a745ff473b40b422eb57b97f8",
       "files": [
         {
           "dest": "scripts/migrate-session-projection-cache.ts",
@@ -57,7 +57,7 @@
       "repo": "https://github.com/Fantasia-Infinity/dsh-TUI.git"
     },
     "agent-society": {
-      "commit": "b29ab0a",
+      "commit": "83fac37f38f63dec8ea432768bfc06ba45645e9c",
       "files": [],
       "patches": [],
       "repo": "https://github.com/Fantasia-Infinity/AgentSociety.git"

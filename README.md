@@ -20,7 +20,7 @@
 |---|---|
 | deepseek-harness | `47f943859b` |
 | dsh-TUI | `0e7a899` |
-| AgentSociety | `54c044fe982702fe815e6905050eb81e19796115` |
+| AgentSociety | `2e8bd8c3fa448e2f591b081c894bf2143ebf136f` |
 | dsh-anchored-standard | `0a38616c1b7ce4219b6d94d95c89f34a90741616` |
 | dsh-opencode-full（可选） | `f4d4dda7c2ab8032ed169a770db3594cf98ea638` |
 

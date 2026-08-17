@@ -20,7 +20,7 @@
           "sha256": "4f01541c71a2e2fc43dbe7131625dd2b6b1887fc32699e553bc258b7b55364b0"
         }
       ],
-      "repo": "https://github.com/deepseek-ai/deepseek-harness.git"
+      "repo": "https://github.com/Fantasia-Infinity/deepseek-harness.git"
     },
     "dsh-tui": {
       "commit": "0e7a899",

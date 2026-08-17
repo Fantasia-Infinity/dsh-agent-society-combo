@@ -229,6 +229,7 @@ async function installComponent(name) {
   const dir = componentDir(name)
   const stateFile = join(stateRoot, `${name}.json`)
   const desiredState = {
+    repo: comp.repo,
     commit: comp.commit,
     patches: Object.fromEntries(
       comp.patches.map((patch) => [patch.path, patch.sha256]),
@@ -240,11 +241,23 @@ async function installComponent(name) {
   const previousState = existsSync(stateFile)
     ? readJson(stateFile)
     : undefined
-  if (
+  const sameState =
     previousState &&
-    JSON.stringify(previousState) === JSON.stringify(desiredState) &&
+    // Legacy state files predate the repo field; treat them as matching so
+    // adding the field does not force a full reinstall for every component.
+    (previousState.repo === undefined || previousState.repo === desiredState.repo) &&
+    JSON.stringify({
+      commit: previousState.commit,
+      patches: previousState.patches,
+      files: previousState.files,
+    }) ===
+      JSON.stringify({
+        commit: desiredState.commit,
+        patches: desiredState.patches,
+        files: desiredState.files,
+      }) &&
     existsSync(join(dir, '.git'))
-  ) {
+  if (sameState) {
     console.log(`[ok] ${name} already at ${comp.commit}`)
     return false
   }
@@ -327,6 +340,19 @@ function cloneAtCommit(repo, commit, dir, managed = false) {
       console.warn(`[backup] ${dir} has local changes; preserving at ${backup}`)
       renameSync(dir, backup)
     } else {
+      // Follow a changed source repository: point origin at the current
+      // manifest URL before fetching, so a fork swap takes effect on the
+      // next update instead of silently keeping the old remote.
+      const origin = runCapture(
+        'git',
+        ['remote', 'get-url', 'origin'],
+        dir,
+        false,
+      )
+      if (origin.status === 0 && origin.stdout.trim() !== repo) {
+        console.log(`[remote] origin -> ${repo}`)
+        runChecked('git', ['remote', 'set-url', 'origin', repo], dir)
+      }
       runChecked('git', ['fetch', '--quiet', 'origin'], dir)
       runChecked('git', ['checkout', '--quiet', commit], dir)
       return

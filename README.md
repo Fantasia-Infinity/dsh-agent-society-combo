@@ -2,7 +2,7 @@
 
 一条命令安装并组合：
 
-- [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)
+- [deepseek-harness（fork）](https://github.com/Fantasia-Infinity/deepseek-harness)
 - [dsh-TUI](https://github.com/Fantasia-Infinity/dsh-TUI)
 - [AgentSociety](https://github.com/Fantasia-Infinity/AgentSociety)
 - [dsh-anchored-standard](https://github.com/xiaobright/dsh-anchored-standard)

@@ -253,15 +253,17 @@ async function installComponent(name) {
     console.log(`[use] ${name} <- ${sourceOverrides.get(name)}`)
     ensureDir(dirname(dir))
     linkOrCopy(sourceOverrides.get(name), dir)
+    // Record the desired state anyway so doctor (and later --update runs)
+    // see a consistent install; patches are never applied to a --source
+    // checkout.
+    ensureDir(stateRoot)
+    writeFileSync(stateFile, `${JSON.stringify(desiredState, null, 2)}\n`)
+    console.log(`[skip-patch] ${name} uses --source checkout; not applying patches`)
+    return false
   } else {
     console.log(`[clone] ${comp.repo} @ ${comp.commit}`)
     ensureDir(dirname(dir))
     cloneAtCommit(comp.repo, comp.commit, dir, Boolean(previousState))
-  }
-
-  if (sourceOverrides.has(name)) {
-    console.log(`[skip-patch] ${name} uses --source checkout; not applying patches`)
-    return false
   }
 
   const status = runCapture('git', ['status', '--porcelain'], dir, false)

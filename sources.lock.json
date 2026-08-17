@@ -58,7 +58,7 @@
       "repo": "https://github.com/Fantasia-Infinity/dsh-TUI.git"
     },
     "agent-society": {
-      "commit": "82417255ffafdc08207700bea675d80d36dda655",
+      "commit": "c5fabf3a9bbca65e51f19d04a2f6f0c3d46f0a5c",
       "files": [],
       "patches": [],
       "repo": "https://github.com/Fantasia-Infinity/AgentSociety.git"

@@ -38,9 +38,16 @@ const startMarker = '| 组件 | 固定 commit |'
 const start = readme.indexOf(startMarker)
 if (start === -1) throw new Error('README.md version matrix start not found')
 const afterStart = readme.indexOf('\n', start) + 1
-const blank = readme.indexOf('\n\n', afterStart)
-if (blank === -1) throw new Error('README.md version matrix end not found')
-const generated = `${readme.slice(0, start)}${table}${readme.slice(blank + 2)}`
+// The table ends at the first line that is not a table row; anything after
+// it (explanatory paragraphs) must be preserved.
+let tableEnd = afterStart
+for (;;) {
+  const lineEnd = readme.indexOf('\n', tableEnd)
+  const line = readme.slice(tableEnd, lineEnd === -1 ? readme.length : lineEnd)
+  if (!line.startsWith('|')) break
+  tableEnd = lineEnd + 1
+}
+const generated = `${readme.slice(0, start)}${table}${readme.slice(tableEnd)}`
 
 if (process.argv.includes('--check')) {
   if (generated !== readme) {

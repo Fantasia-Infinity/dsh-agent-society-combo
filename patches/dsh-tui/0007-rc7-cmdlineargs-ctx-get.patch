@@ -1,0 +1,16 @@
+diff --git a/src/dsh-adapter/plugin.ts b/src/dsh-adapter/plugin.ts
+index da91940..348e93d 100644
+--- a/src/dsh-adapter/plugin.ts
++++ b/src/dsh-adapter/plugin.ts
+@@ -388,7 +388,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
+   // which mounts them as ctx.cmdlineArgs. Submit once the channel exists —
+   // delivery goes through the normal pending/inbox chain, so no special
+   // timing is needed; flag-shaped leftovers are not prompt text.
+-  const cmdlineArgs = (ctx as { cmdlineArgs?: { args?: readonly string[] } }).cmdlineArgs?.args
++  // rc.7 cordis throws on undeclared ctx property access; read the
++  // optional service through ctx.get() instead (positional args from the
++  // dsh CLI are mounted as ctx.cmdlineArgs when present).
++  const cmdlineArgs = (ctx.get('cmdlineArgs') as { args?: readonly string[] } | undefined)?.args
+   const initialPrompt = cmdlineArgs?.filter(arg => !arg.startsWith('-')).join(' ').trim()
+   if (initialPrompt) channel.submit(initialPrompt)
+   // Attach the stderr reporter to the live channel and flush anything a

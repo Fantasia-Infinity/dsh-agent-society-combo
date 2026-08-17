@@ -23,35 +23,36 @@
       "repo": "https://github.com/Fantasia-Infinity/deepseek-harness.git"
     },
     "dsh-tui": {
-      "commit": "0e7a899",
+      "commit": "3a88f33cf98f8cfc9b47a131d3dced7595d789bf",
       "files": [
         {
           "dest": "bin/dsh-tui-local.js",
           "executable": true,
           "sha256": "295012cff584f94ee05d3a1b7805b9aba655b33ae983e40b2d60ad75a64d4e51",
           "src": "patches/dsh-tui/files/bin/dsh-tui-local.js"
+        },
+        {
+          "dest": "pnpm-lock.yaml",
+          "sha256": "635214f0b211b55b98bf1b6a2a6cdf2618efa35851884c686c26b66c12dd4918",
+          "src": "patches/dsh-tui/files/pnpm-lock.yaml"
         }
       ],
       "patches": [
         {
           "path": "patches/dsh-tui/0001-standalone-source-launcher.patch",
-          "sha256": "952f150f27853dab5388ce4f8cb48d7fab91bed649af23c9428e8b38237791ad"
-        },
-        {
-          "path": "patches/dsh-tui/0002-shared-workspace-and-resume-rows.patch",
-          "sha256": "43d13257f7e866fa2f11c85c4462ccd581b0b5160e9373208a8fc546eb6d62e4"
-        },
-        {
-          "path": "patches/dsh-tui/0003-shared-resume-and-copy.patch",
-          "sha256": "ea646ede7a283b1288dd9195b33d2b71ebfcd9d868b1e8c216bfba99eccec8e5"
+          "sha256": "500d3e2c8917186f3c622f122c34671954f4b372ff7dbd914fc4ac129b55ed95"
         },
         {
           "path": "patches/dsh-tui/0004-build-against-sibling-checkout.patch",
-          "sha256": "b84a834ff48dba28347c1f9c8cd88425a1636a3f52246ead40875c29976a027f"
+          "sha256": "c6ed021c9ecd40dfcc52977f842203bd905f6de76eb2970e273cd767a33a8a75"
         },
         {
-          "path": "patches/dsh-tui/0005-sync-package-lock.patch",
-          "sha256": "8c27b9201293ed1d9bd9312285ece96a72526fa51f85f6ecba015324f613de4b"
+          "path": "patches/dsh-tui/0006-pnpm-overrides-rc7.patch",
+          "sha256": "235bf991eb6572058bbc875b93b2209e7e5aecda24bf308c8b065a789813474a"
+        },
+        {
+          "path": "patches/dsh-tui/0007-rc7-cmdlineargs-ctx-get.patch",
+          "sha256": "67916f42c3f083e96d095edd979ee2cd10cb6b795821e0b542f1120a40abb2ee"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/dsh-TUI.git"

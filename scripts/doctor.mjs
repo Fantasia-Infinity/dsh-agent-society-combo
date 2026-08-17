@@ -58,7 +58,7 @@ const agentSociety = join(root, 'sources', 'agent-society')
 check('harness dsh bin', Boolean(file(join(harness, 'apps', 'cli', 'lib', 'bin.js'))))
 check('harness app-boot lib', Boolean(file(join(harness, 'packages', 'boot', 'app-boot', 'lib', 'index.js'))))
 check('harness web dist', Boolean(file(join(harness, 'apps', 'web', 'dist', 'index.html'))))
-check('dsh-tui plugin lib', Boolean(file(join(tui, 'lib', 'types', 'plugin.js'))))
+check('dsh-tui plugin lib', Boolean(file(join(tui, 'lib', 'types', 'index.js'))))
 check('agent-host cli', Boolean(file(join(agentSociety, 'agent-host', 'dist', 'src', 'cli.js'))))
 check('dsh-plugin lib', Boolean(file(join(agentSociety, 'dsh-plugin', 'lib', 'worker-plugin.js'))))
 

@@ -373,8 +373,11 @@ async function installDependencies(harness, tui, agentSociety, openCodeFull, cha
   if (installHarness) pnpm(harness, ['install', '--frozen-lockfile'])
 
   const installTui = changed.has('dsh-tui') || !existsSync(join(tui, 'node_modules', 'react'))
-  console.log(installTui ? '[deps] dsh-TUI npm ci' : '[skip] dsh-TUI node_modules current')
-  if (installTui) runChecked('npm', ['ci'], tui)
+  console.log(installTui ? '[deps] dsh-TUI pnpm install' : '[skip] dsh-TUI node_modules current')
+  // Upstream moved to pnpm (package-lock.json -> pnpm-lock.yaml); its
+  // `prepare` script compiles with tsc before deps are linked, so install
+  // with scripts skipped and let buildAll run the real compile.
+  if (installTui) pnpm(tui, ['install', '--frozen-lockfile', '--ignore-scripts'])
 
   const installAgentHost = changed.has('agent-society') || !existsSync(join(agentSociety, 'agent-host', 'node_modules'))
   console.log(installAgentHost ? '[deps] AgentSociety agent-host npm ci' : '[skip] agent-host node_modules current')
@@ -427,7 +430,7 @@ async function buildAll(harness, tui, agentSociety, openCodeFull, changed) {
     console.log('[skip] deepseek-harness web dist already built')
   }
 
-  const tuiPlugin = join(tui, 'lib', 'types', 'plugin.js')
+  const tuiPlugin = join(tui, 'lib', 'types', 'index.js')
   if (options.forceBuild || changed.has('dsh-tui') || !existsSync(tuiPlugin)) {
     console.log('[build] dsh-TUI')
     if (platform() === 'win32') {

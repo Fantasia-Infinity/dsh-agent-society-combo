@@ -1,5 +1,5 @@
 diff --git a/scripts/build.sh b/scripts/build.sh
-index adb07d1..27a5bf1 100644
+index adb07d1..70dea2e 100644
 --- a/scripts/build.sh
 +++ b/scripts/build.sh
 @@ -3,8 +3,8 @@
@@ -11,10 +11,10 @@ index adb07d1..27a5bf1 100644
 +# ships. Set DSH_CHECKOUT to use a sibling source checkout directly; without
 +# it, retain the installed-source discovery used by the published workflow.
  set -eu
-
+ 
  ROOT="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 @@ -12,7 +12,9 @@ cd "$ROOT"
-
+ 
  # --- Locate the DSH checkout -------------------------------------------
  CHECKOUT=""
 -if [ -n "${DSH_HOME:-}" ] && [ -d "$DSH_HOME/source/current" ]; then
@@ -24,7 +24,7 @@ index adb07d1..27a5bf1 100644
    CHECKOUT="$DSH_HOME/source/current"
  elif [ -d "${HOME:-}/.dsh/source/current" ]; then
    CHECKOUT="$HOME/.dsh/source/current"
-@@ -48,13 +50,29 @@ mkdir -p node_modules/@deepseek-ai node_modules/@standard-schema
+@@ -48,13 +50,44 @@ mkdir -p node_modules/@deepseek-ai node_modules/@standard-schema
  if [ ! -e node_modules/@types ]; then
    ln -sfn "$CHECKOUT/node_modules/@types" node_modules/@types
  fi
@@ -58,6 +58,21 @@ index adb07d1..27a5bf1 100644
 +  link_pkg @deepseek-ai/dsh-llm packages/llm/llm
 +  link_pkg @deepseek-ai/dsh-session packages/core/session
 +fi
-
++
++# dsh-working-activity is a plain npm package (not part of the harness
++# workspace): its d.ts imports @deepseek-ai/dsh-session (and peers) through
++# its own .pnpm copy, which would mix npm rc.7 types with the patched
++# source. Point its scoped deps at the root links (already patched source).
++wa_dir=$(find "node_modules/.pnpm" -maxdepth 1 -type d -iname 'dsh-working-activity@*' 2>/dev/null | head -1)
++if [ -n "$wa_dir" ] && [ -d "$wa_dir/node_modules/@deepseek-ai" ]; then
++  for scoped in "$wa_dir"/node_modules/@deepseek-ai/*; do
++    name=$(basename "$scoped")
++    if [ -e "node_modules/@deepseek-ai/$name" ]; then
++      rm -f "$scoped"
++      ln -s "$(pwd)/node_modules/@deepseek-ai/$name" "$scoped"
++    fi
++  done
++fi
+ 
  # @standard-schema/spec: external npm types referenced by cordis/schemastery
  # declarations, hoisted only inside the pnpm store.

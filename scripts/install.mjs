@@ -75,6 +75,7 @@ function parseArgs(argv) {
     withSsh: false,
     sshPlugin: process.env.COMBO_SSH_PLUGIN || 'dsh-ssh-ops@0.2.1',
     withOpenCodeFull: process.env.COMBO_OPENCODE_FULL === '1',
+    withSubscriptions: process.env.COMBO_SUBSCRIPTIONS === '1',
     dryRun: false,
     yes: false,
   }
@@ -97,6 +98,7 @@ function parseArgs(argv) {
     else if (arg === '--with-ssh') { result.withSsh = true; if (next && !next.startsWith('--')) { result.sshPlugin = next; index += 1 } }
     else if (arg.startsWith('--with-ssh=')) { result.withSsh = true; result.sshPlugin = arg.slice(11) }
     else if (arg === '--with-opencode-full') result.withOpenCodeFull = true
+    else if (arg === '--with-subscriptions') result.withSubscriptions = true
     else if (arg === '--dry-run') result.dryRun = true
     else if (arg === '--yes' || arg === '-y') result.yes = true
     else if (arg === '--help' || arg === '-h') {
@@ -130,6 +132,9 @@ Options:
   --with-opencode-full
                       add the dsh-opencode-full bundle and switch the web
                       profile default preset to opencode-full
+  --with-subscriptions
+                      add dsh-plugin-subscriptions (ChatGPT/Claude/Grok
+                      subscription LLM providers) to the web profile
   --dry-run           print the plan without changing anything`
 }
 
@@ -181,6 +186,7 @@ async function main() {
       options.withSsh ? options.sshPlugin : undefined,
       options.preset,
       openCodeFull,
+      options.withSubscriptions,
     )
   }
   if (!options.skipConfig) await writePreferences()
@@ -567,7 +573,7 @@ async function detectOpenCodeFullLspServers(openCodeFull) {
   }
 }
 
-async function ensureWebProfile(harness, agentSociety, sshSpec, preset, openCodeFull) {
+async function ensureWebProfile(harness, agentSociety, sshSpec, preset, openCodeFull, withSubscriptions) {
   const profile =
     process.env.COMBO_WEB_PROFILE ||
     process.env.COMBO_SSH_PROFILE ||
@@ -608,9 +614,16 @@ async function ensureWebProfile(harness, agentSociety, sshSpec, preset, openCode
     if (version) dependencies[sshName] = version
     bundles.push(sshName)
   }
+  if (withSubscriptions) {
+    // ChatGPT (Codex) / Claude / Grok subscription providers with OAuth
+    // login from the web Settings page; tokens live under ~/.dsh/plugins/
+    // subscriptions/auth.json and are untouched by the installer.
+    dependencies['dsh-plugin-subscriptions'] = '^0.3.1'
+    bundles.push('dsh-plugin-subscriptions')
+  }
   const profileDir = join(dshHome, 'profiles', profile)
   const presetName = openCodeFull ? 'opencode-full' : preset
-  console.log(`[web] profile ${profile} core=${corePlugin} preset=${presetName}${openCodeFull ? ' opencode-full' : ''}${sshName ? ` ssh=${sshName}` : ''}`)
+  console.log(`[web] profile ${profile} core=${corePlugin} preset=${presetName}${openCodeFull ? ' opencode-full' : ''}${sshName ? ` ssh=${sshName}` : ''}${withSubscriptions ? ' subscriptions' : ''}`)
   ensureDir(profileDir)
   ensureDir(binDir)
   const packageJson = {

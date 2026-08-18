@@ -23,7 +23,7 @@
       "repo": "https://github.com/Fantasia-Infinity/deepseek-harness.git"
     },
     "dsh-tui": {
-      "commit": "3a88f33cf98f8cfc9b47a131d3dced7595d789bf",
+      "commit": "1f89bbe2c5941515e4e370669552d4d2d0084aac",
       "files": [
         {
           "dest": "bin/dsh-tui-local.js",
@@ -33,7 +33,7 @@
         },
         {
           "dest": "pnpm-lock.yaml",
-          "sha256": "635214f0b211b55b98bf1b6a2a6cdf2618efa35851884c686c26b66c12dd4918",
+          "sha256": "696b7abc4df8ae0cb24d9a91ae7f22f823f9941638830c6e4c6ea03520eddf5e",
           "src": "patches/dsh-tui/files/pnpm-lock.yaml"
         }
       ],
@@ -48,11 +48,15 @@
         },
         {
           "path": "patches/dsh-tui/0006-pnpm-overrides-rc7.patch",
-          "sha256": "235bf991eb6572058bbc875b93b2209e7e5aecda24bf308c8b065a789813474a"
+          "sha256": "e615c23f02e20887a4c4bcfe9f755a47fdadd1fed5d11fa39aeaec97b069c15a"
         },
         {
           "path": "patches/dsh-tui/0007-rc7-cmdlineargs-ctx-get.patch",
           "sha256": "67916f42c3f083e96d095edd979ee2cd10cb6b795821e0b542f1120a40abb2ee"
+        },
+        {
+          "path": "patches/dsh-tui/0008-dsh-std-build.patch",
+          "sha256": "0e0ba54ada92a30826ad91e947298c7bf498e635ae6310922de154dccc09a1ff"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/dsh-TUI.git"

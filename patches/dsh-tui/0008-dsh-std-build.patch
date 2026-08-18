@@ -1,0 +1,16 @@
+--- a/scripts/build.sh	2026-08-18 13:57:28
++++ b/scripts/build.sh	2026-08-18 13:57:28
+@@ -98,6 +98,13 @@
+   echo "build: @standard-schema/spec not found in pnpm store; skipLibCheck may still cover it" >&2
+ fi
+ 
++# v0.8.1+ vendors @dsh-std as a nested pnpm workspace; its packages must
++# be compiled before tsc can resolve @dsh-std/* type declarations.
++if [ -d "$ROOT/vendor/dsh-std" ] && [ -f "$ROOT/vendor/dsh-std/package.json" ]; then
++  echo "=== Building vendor/dsh-std ==="
++  (cd "$ROOT/vendor/dsh-std" && pnpm install --frozen-lockfile --ignore-scripts >/dev/null && pnpm -r build)
++fi
++
+ echo "=== Compiling src → lib/types ($("$TSC" --version)) ==="
+ "$TSC" -p tsconfig.json
+ # Incremental build cache is a build-time artifact — keep it out of the

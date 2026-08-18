@@ -286,6 +286,10 @@ async function installComponent(name) {
     )
   }
   runChecked('git', ['reset', '--hard', comp.commit], dir)
+  // TUI >= 0.8.1 vendors @dsh-std via git submodules (vendor/dsh-std and
+  // dsh-ecosystem-spec); initialize them so the pnpm workspace resolves.
+  // A no-op for components without submodules.
+  runChecked('git', ['submodule', 'update', '--init', '--recursive'], dir)
   removeStaleOverlays(dir, previousState?.files, desiredState.files)
   for (const patch of comp.patches) {
     const patchPath = join(comboRoot, patch.path)

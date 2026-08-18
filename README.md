@@ -18,9 +18,9 @@
 
 | 组件 | 固定 commit |
 |---|---|
-| deepseek-harness | `e181408c9a` |
-| dsh-TUI | `0e7a899` |
-| AgentSociety | `83fac37` |
+| deepseek-harness | `e181408c9aa99a6a745ff473b40b422eb57b97f8` |
+| dsh-TUI | `3a88f33cf98f8cfc9b47a131d3dced7595d789bf` |
+| AgentSociety | `4861347c3ddd20668318eacee858c8e63d8f2ab1` |
 | dsh-anchored-standard | `0a38616c1b7ce4219b6d94d95c89f34a90741616` |
 | dsh-opencode-full（可选） | `f4d4dda7c2ab8032ed169a770db3594cf98ea638` |
 

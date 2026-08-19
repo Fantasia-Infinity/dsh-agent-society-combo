@@ -18,6 +18,10 @@
         {
           "path": "patches/deepseek-harness/0002-activity-status-persistence-test.patch",
           "sha256": "4f01541c71a2e2fc43dbe7131625dd2b6b1887fc32699e553bc258b7b55364b0"
+        },
+        {
+          "path": "patches/deepseek-harness/0004-native-web-base-path.patch",
+          "sha256": "6c69d90fb5dd9d3abc047244d119920654a9e0d584f94c7853a45225f6fa1266"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/deepseek-harness.git"
@@ -62,7 +66,7 @@
       "repo": "https://github.com/Fantasia-Infinity/dsh-TUI.git"
     },
     "agent-society": {
-      "commit": "50fc3e1",
+      "commit": "50ad85e7601f602cce4aa6bf697070343b52b6c7",
       "files": [],
       "patches": [],
       "repo": "https://github.com/Fantasia-Infinity/AgentSociety.git"

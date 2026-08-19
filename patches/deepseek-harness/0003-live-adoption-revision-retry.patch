@@ -1,0 +1,133 @@
+diff --git a/packages/session/session-persistence/src/coordinator.ts b/packages/session/session-persistence/src/coordinator.ts
+index eb5f9714c..ef3641008 100644
+--- a/packages/session/session-persistence/src/coordinator.ts
++++ b/packages/session/session-persistence/src/coordinator.ts
+@@ -1299,27 +1299,45 @@ export class PersistenceCoordinator<TornMarker = unknown> {
+    * live suffix that was ahead of the stored prefix.
+    */
+   private async adoptLivePrefix(session: Session, seed: readonly SessionEvent[], stored: StoredPrefix<TornMarker>): Promise<void> {
+-    const { meta, events, tornMarker } = stored
+-    this.assertStoredId(session.header.id, meta)
+-    if (meta.cwd !== session.header.cwd) {
+-      throw new Error(`session "${session.header.id}" is already persisted at a different cwd (persisted: ${String(meta.cwd)}, live: ${String(session.header.cwd)}) (id collision)`)
+-    }
+-    this.assertVersion(meta)
+-    const storedEvents = snapshotStoredEvents(events, session.header.id)
+-    this.assertEventsSupported(meta, storedEvents)
+-    if (!seedCoversPrefix(seed, storedEvents)) {
+-      throw new Error(`session "${session.header.id}" already has a persisted log on disk that does not match this live session (id collision)`)
++    // Another process may have advanced the durable log after we loaded it.
++    // Re-read until the revision is stable so a stale cursor cannot append a
++    // lower-seq suffix after a newer committed prefix (which would corrupt the
++    // log with a seq gap). This mirrors the cold-adoption retry in `adopt`.
++    let current = stored
++    for (;;) {
++      const id = session.header.id
++      if (await this.backend.readStoredRevision(id) !== current.revision) {
++        const fresh = await this.backend.loadStored(id)
++        if (fresh === undefined) {
++          throw new Error(`session "${id}" disappeared during live adoption`)
++        }
++        current = fresh
++        continue
++      }
++
++      const { meta, events, tornMarker } = current
++      this.assertStoredId(id, meta)
++      if (meta.cwd !== session.header.cwd) {
++        throw new Error(`session "${id}" is already persisted at a different cwd (persisted: ${String(meta.cwd)}, live: ${String(session.header.cwd)}) (id collision)`)
++      }
++      this.assertVersion(meta)
++      const storedEvents = snapshotStoredEvents(events, id)
++      this.assertEventsSupported(meta, storedEvents)
++      if (!seedCoversPrefix(seed, storedEvents)) {
++        throw new Error(`session "${id}" already has a persisted log on disk that does not match this live session (id collision)`)
++      }
++      // Truncate-only repair (no closers): the open turn is NOT closed here.
++      if (tornMarker !== undefined) await this.backend.commitRepair(meta, tornMarker, [])
++      this.states.set(id, {
++        meta: { ...meta },
++        cursor: storedEvents.length,
++        materialized: true,
++        owner: session,
++      })
++      const suffix = seed.slice(storedEvents.length)
++      if (suffix.length > 0) await this.appendCore(id, suffix)
++      return
+     }
+-    // Truncate-only repair (no closers): the open turn is NOT closed here.
+-    if (tornMarker !== undefined) await this.backend.commitRepair(meta, tornMarker, [])
+-    this.states.set(session.header.id, {
+-      meta: { ...meta },
+-      cursor: storedEvents.length,
+-      materialized: true,
+-      owner: session,
+-    })
+-    const suffix = seed.slice(storedEvents.length)
+-    if (suffix.length > 0) await this.appendCore(session.header.id, suffix)
+   }
+ 
+   private async flush(session: Session): Promise<void> {
+diff --git a/packages/session/session-persistence/tests/persistence.spec.ts b/packages/session/session-persistence/tests/persistence.spec.ts
+index 50ad798e0..4d423d0b1 100644
+--- a/packages/session/session-persistence/tests/persistence.spec.ts
++++ b/packages/session/session-persistence/tests/persistence.spec.ts
+@@ -936,6 +936,58 @@ describe('PersistenceCoordinator session preparations', () => {
+     }
+   })
+ 
++  it('retries live adoption when the stored revision becomes stale', async () => {
++    const ctx = new Context()
++    await ctx.plugin(SessionStore)
++    const backend = new ControlledBackend()
++    const id = SessionId('live-adoption-revision-refresh')
++    backend.store.set(id, { meta: meta(id), events: oneTurnLog() })
++
++    const seed = [
++      ...oneTurnLog(),
++      { type: 'turn/start', seq: 6, time: 7, data: { turn: 2 } },
++      { type: 'turn/end', seq: 7, time: 8, data: { turn: 2, reason: { kind: 'completed' } } },
++    ] as SessionEvent[]
++
++    // Simulate another process having already advanced the durable log after
++    // this process loaded the old prefix. The first load returns the stale
++    // six-event prefix; the first revision check observes the current
++    // eight-event log and forces a reload before any suffix is appended.
++    const stalePrefix = {
++      meta: structuredClone(backend.store.get(id)!.meta),
++      events: structuredClone(oneTurnLog()),
++      revision: memoryRevision(backend.store.get(id)!),
++    }
++    backend.store.get(id)!.events.push(...structuredClone(seed.slice(6)) as SessionEvent[])
++    const currentRevision = memoryRevision(backend.store.get(id)!)
++    const loadStored = backend.loadStored.bind(backend)
++    const readStoredRevision = backend.readStoredRevision.bind(backend)
++    vi.spyOn(backend, 'loadStored')
++      .mockResolvedValueOnce(stalePrefix)
++      .mockImplementation(loadStored)
++    vi.spyOn(backend, 'readStoredRevision')
++      .mockResolvedValueOnce(currentRevision)
++      .mockImplementation(readStoredRevision)
++
++    let coordinator!: PersistenceCoordinator<never>
++    const fiber = await ctx.plugin(Object.assign((inner: Context) => {
++      coordinator = new PersistenceCoordinator(inner, backend)
++    }, { inject: ['sessions'] }))
++
++    try {
++      const live = ctx.sessions.create(id, { seed, meta: meta(id) })
++      await ctx.sessions.flush(live)
++
++      // Only the live constructor's end-seed is appended; the overlapping
++      // six/seven suffix is not written twice.
++      expect(backend.store.get(id)?.events.map(event => event.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8])
++      expect(backend.appendAttempts).toBe(1)
++    } finally {
++      await fiber.dispose()
++      await ctx.fiber.dispose()
++    }
++  })
++
+   it('inspects an open live turn without balancing it', async () => {
+     const ctx = new Context()
+     await ctx.plugin(SessionStore)

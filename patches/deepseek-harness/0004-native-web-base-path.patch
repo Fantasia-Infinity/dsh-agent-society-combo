@@ -1,0 +1,331 @@
+diff --git a/apps/web/index.html b/apps/web/index.html
+index a14de72d4..deb28ce2f 100644
+--- a/apps/web/index.html
++++ b/apps/web/index.html
+@@ -3,12 +3,12 @@
+   <head>
+     <meta charset="utf-8" />
+     <meta name="viewport" content="width=device-width, initial-scale=1" />
+-    <link rel="manifest" href="/manifest.webmanifest" />
+-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
++    <link rel="manifest" href="./manifest.webmanifest" />
++    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+     <title>DeepSeek Harness</title>
+   </head>
+   <body>
+     <div id="root"></div>
+-    <script type="module" src="/src/main.ts"></script>
++    <script type="module" src="./src/main.ts"></script>
+   </body>
+ </html>
+diff --git a/apps/web/public/manifest.webmanifest b/apps/web/public/manifest.webmanifest
+index 20a428fee..583a46791 100644
+--- a/apps/web/public/manifest.webmanifest
++++ b/apps/web/public/manifest.webmanifest
+@@ -1,13 +1,13 @@
+ {
+-  "id": "/",
++  "id": "./",
+   "name": "DeepSeek Harness",
+   "short_name": "DSH",
+-  "start_url": "/",
+-  "scope": "/",
++  "start_url": "./",
++  "scope": "./",
+   "display": "fullscreen",
+   "icons": [
+     {
+-      "src": "/favicon.svg",
++      "src": "./favicon.svg",
+       "sizes": "any",
+       "type": "image/svg+xml",
+       "purpose": "any"
+diff --git a/apps/web/tests/pwa-manifest.e2e.ts b/apps/web/tests/pwa-manifest.e2e.ts
+index fe97e42da..492431b53 100644
+--- a/apps/web/tests/pwa-manifest.e2e.ts
++++ b/apps/web/tests/pwa-manifest.e2e.ts
+@@ -7,18 +7,18 @@ const DIST_ROOT = fileURLToPath(new URL('../dist', import.meta.url))
+ 
+ it('ships install metadata with the built web application', async () => {
+   const index = await readFile(join(DIST_ROOT, 'index.html'), 'utf8')
+-  expect(index).toContain('<link rel="manifest" href="/manifest.webmanifest" />')
++  expect(index).toContain('<link rel="manifest" href="./manifest.webmanifest" />')
+ 
+   const manifest: unknown = JSON.parse(await readFile(join(DIST_ROOT, 'manifest.webmanifest'), 'utf8'))
+   expect(manifest).toEqual({
+-    id: '/',
++    id: './',
+     name: 'DeepSeek Harness',
+     short_name: 'DSH',
+-    start_url: '/',
+-    scope: '/',
++    start_url: './',
++    scope: './',
+     display: 'fullscreen',
+     icons: [{
+-      src: '/favicon.svg',
++      src: './favicon.svg',
+       sizes: 'any',
+       type: 'image/svg+xml',
+       purpose: 'any',
+diff --git a/apps/web/vite.config.ts b/apps/web/vite.config.ts
+index 7b9ef7a15..155b39197 100644
+--- a/apps/web/vite.config.ts
++++ b/apps/web/vite.config.ts
+@@ -90,6 +90,9 @@ function npmPackageOf(id: string): string | undefined {
+ }
+ 
+ export default defineConfig({
++  // Keep the browser surface relocatable: the Hub mounts one device below a
++  // per-node path, while local dsh web still serves it at /.
++  base: './',
+   plugins: [rejectStandaloneServe(), react()],
+   build: {
+     sourcemap: true,
+diff --git a/packages/client/connection/src/client/rpc.ts b/packages/client/connection/src/client/rpc.ts
+index f8bacb155..d1b5b58db 100644
+--- a/packages/client/connection/src/client/rpc.ts
++++ b/packages/client/connection/src/client/rpc.ts
+@@ -28,7 +28,7 @@ export function createWebConnectionRpc(): ClientConnectionRpc {
+         payload,
+       }
+       const response = await globalThis.fetch(
+-        new URL(`${channel}/${endpoint}`, resolveBase()),
++        resolvePath(`${channel}/${endpoint}`),
+         {
+           method: 'POST',
+           headers: { 'content-type': 'application/json' },
+@@ -49,8 +49,15 @@ export function createWebConnectionRpc(): ClientConnectionRpc {
+ }
+ 
+ function resolveBase(): string {
+-  const location = (globalThis as { location?: { origin?: string } }).location
+-  return location?.origin !== undefined && location.origin !== 'null' ? location.origin : INTERNAL_BASE
++  const location = (globalThis as { location?: { origin?: string; href?: string } }).location
++  if (location?.origin !== undefined && location.origin !== 'null') {
++    return new URL('.', location.href ?? `${location.origin}/`).toString()
++  }
++  return `${INTERNAL_BASE}/`
++}
++
++function resolvePath(path: string): URL {
++  return new URL(path.replace(/^\/+/, ''), resolveBase())
+ }
+ 
+ function assertTarget(channel: string, endpoint: string): void {
+diff --git a/packages/client/connection/src/client/web-api-client.ts b/packages/client/connection/src/client/web-api-client.ts
+index a2c2d95b7..c7168565e 100644
+--- a/packages/client/connection/src/client/web-api-client.ts
++++ b/packages/client/connection/src/client/web-api-client.ts
+@@ -37,7 +37,7 @@ export class WebApiClient extends AbstractApiClient {
+     frameSchema: Parser<F>,
+     onOpen?: () => void,
+   ): AsyncGenerator<RpcRequest<F>> {
+-    const url = new URL(path, this.resolveBase())
++    const url = this.resolvePath(path)
+     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+     const socket = new WebSocket(url)
+     const inbox: SocketItem<F>[] = []
+diff --git a/packages/client/connection/tests/client-apply.client.spec.ts b/packages/client/connection/tests/client-apply.client.spec.ts
+index b7f6ebe38..95468702c 100644
+--- a/packages/client/connection/tests/client-apply.client.spec.ts
++++ b/packages/client/connection/tests/client-apply.client.spec.ts
+@@ -10,7 +10,7 @@ import { RpcId } from '../src/client/api.ts'
+ import { FixtureApiClient } from '../src/client/fixture.ts'
+ import { WebApiClient } from '../src/client/web-api-client.ts'
+ 
+-type Win = { location?: { hostname: string; search: string; origin?: string } }
++type Win = { location?: { hostname: string; search: string; origin?: string; href?: string } }
+ type WebSocketGlobal = { WebSocket?: typeof WebSocket }
+ 
+ const originalWebSocket = globalThis.WebSocket
+@@ -322,6 +322,7 @@ describe('connection client apply', () => {
+   it('validates generic RPC transport failures, correlation, and targets', async () => {
+     ;(globalThis as Win).location = {
+       hostname: 'harness.example', search: '', origin: 'https://harness.example',
++      href: 'https://harness.example/v1/web/node/',
+     }
+     const handle = await mount()
+     const original = globalThis.fetch
+@@ -331,7 +332,7 @@ describe('connection client apply', () => {
+       await expect(handle.rpc.call('/api', 'goals/create', {}, abort.signal))
+         .rejects.toThrow('HTTP 503')
+       expect(globalThis.fetch).toHaveBeenCalledWith(
+-        new URL('https://harness.example/api/goals/create'),
++        new URL('https://harness.example/v1/web/node/api/goals/create'),
+         expect.objectContaining({ signal: abort.signal }),
+       )
+ 
+diff --git a/packages/client/hmr/src/client/index.ts b/packages/client/hmr/src/client/index.ts
+index 8e440ac0d..27af2ef3b 100644
+--- a/packages/client/hmr/src/client/index.ts
++++ b/packages/client/hmr/src/client/index.ts
+@@ -64,10 +64,10 @@
+ import type { Context } from '@deepseek-ai/cordis'
+ import type { Entry, Loader } from '@deepseek-ai/cordis-plugin-loader'
+ import type { PluginsEventFrame } from '../events.ts'
+-import { EVENTS_ENDPOINT } from '../events.ts'
++import { CLIENT_EVENTS_ENDPOINT } from '../events.ts'
+ 
+ export type { PluginsEventFrame } from '../events.ts'
+-export { EVENTS_ENDPOINT } from '../events.ts'
++export { CLIENT_EVENTS_ENDPOINT, EVENTS_ENDPOINT } from '../events.ts'
+ 
+ /** Cordis plugin name. */
+ export const name = 'client-hmr'
+@@ -164,7 +164,7 @@ export function apply(ctx: Context): void {
+   }
+ 
+   ctx.effect(() => {
+-    const source = new EventSource(EVENTS_ENDPOINT)
++    const source = new EventSource(CLIENT_EVENTS_ENDPOINT)
+     source.addEventListener('message', (event: MessageEvent<string>) => {
+       let frame: PluginsEventFrame
+       try {
+diff --git a/packages/client/hmr/src/events.ts b/packages/client/hmr/src/events.ts
+index 756bd2407..91dcb89d4 100644
+--- a/packages/client/hmr/src/events.ts
++++ b/packages/client/hmr/src/events.ts
+@@ -14,3 +14,6 @@ export type PluginsEventFrame =
+ 
+ /** System SSE endpoint pushing graph/rebuilt frames (wire protocol constant). */
+ export const EVENTS_ENDPOINT = '/plugins/events'
++
++/** Browser-relative form; survives mounting the page below a path prefix. */
++export const CLIENT_EVENTS_ENDPOINT = './plugins/events'
+diff --git a/packages/client/modules/src/client/manifest.ts b/packages/client/modules/src/client/manifest.ts
+index 3f30074fe..65b21a192 100644
+--- a/packages/client/modules/src/client/manifest.ts
++++ b/packages/client/modules/src/client/manifest.ts
+@@ -50,7 +50,7 @@ declare module '@deepseek-ai/cordis' {
+ export interface WebBootEntry {
+   /** Entry name == package name. */
+   id: string
+-  /** Bundle endpoint, '/plugins/<id>/client.js?rev=<rev>'. */
++  /** Browser-relative bundle endpoint, './plugins/<id>/client.js?rev=<rev>'. */
+   url: string
+   /** Bundle content hash (cache-busting consistency anchor). */
+   rev: string
+@@ -72,7 +72,7 @@ export interface WebBootGraph {
+ export interface BootModuleRow {
+   /** Entry name == package name (module-table key). */
+   id: string
+-  /** Bundle endpoint, '/plugins/<id>/client.js?rev=<rev>'. */
++  /** Browser-relative bundle endpoint, './plugins/<id>/client.js?rev=<rev>'. */
+   url: string
+   /** Bundle content hash. */
+   rev: string
+diff --git a/packages/client/modules/src/index.ts b/packages/client/modules/src/index.ts
+index aa0ff5d59..493bc68fa 100644
+--- a/packages/client/modules/src/index.ts
++++ b/packages/client/modules/src/index.ts
+@@ -2,7 +2,7 @@
+  * Node half of the client module system (`dsh.client` dual-face package): scans
+  * the host Loader's entries for packages declaring `dsh.client`, composes the
+  * `window.__DSH_BOOT__` entry graph (wire single source: {@link WebBootEntry}
+- * in `./client/manifest.ts`), serves `/plugins/<id>/client.js` and its source
++ * in `./client/manifest.ts`), serves `/plugins/<id>/client.js` (the browser graph uses a relative `./plugins/...` URL) and its source
+  * map, taps the index render to inject the boot manifest, and provides the
+  * `clientModuleHost` service (the HMR node half's registration/notification
+  * face).
+@@ -150,7 +150,7 @@ function shortHash(input: string | Buffer): string {
+ function graphRow(id: string, rev: string, injectEdges: string[] | undefined, immediately: boolean): WebBootEntry {
+   return {
+     id,
+-    url: `/plugins/${id}/client.js?rev=${rev}`,
++    url: `./plugins/${id}/client.js?rev=${rev}`,
+     rev,
+     ...(injectEdges !== undefined ? { inject: injectEdges } : {}),
+     ...(immediately ? { immediately: true } : {}),
+diff --git a/packages/client/modules/tests/node-half.client.spec.ts b/packages/client/modules/tests/node-half.client.spec.ts
+index 9fbe144bc..df7bb5b2d 100644
+--- a/packages/client/modules/tests/node-half.client.spec.ts
++++ b/packages/client/modules/tests/node-half.client.spec.ts
+@@ -80,7 +80,9 @@ describe('client bundle activation', () => {
+     })
+     mkdirSync(dirname(clientPath), { recursive: true })
+     writeFileSync(clientPath, 'module.exports = {}\n')
+-    expect(construct([currentName]).graph().entries.map(entry => entry.id)).toEqual([currentName])
++    const graph = construct([currentName]).graph()
++    expect(graph.entries.map(entry => entry.id)).toEqual([currentName])
++    expect(graph.entries[0]?.url).toMatch(new RegExp(`^\\./plugins/${currentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/client\\.js\\?rev=`))
+   })
+ 
+   it('groups missing bundles under one source-build instruction with a package/path list', () => {
+diff --git a/packages/host/apiproxy/src/fetch/client.ts b/packages/host/apiproxy/src/fetch/client.ts
+index 70e3ece58..11f4795c4 100644
+--- a/packages/host/apiproxy/src/fetch/client.ts
++++ b/packages/host/apiproxy/src/fetch/client.ts
+@@ -289,10 +289,22 @@ export abstract class AbstractApiClient implements IApiClient {
+     })
+   }
+ 
+-  /** Browser = same-origin (a fake authority would fail DNS on real requests); no-location env (Node) = fake authority. */
++  /**
++   * Browser base is the current document directory, not only its origin.
++   * A relative document directory is what lets the same DSH build run at /
++   * and below a Hub's /v1/web/<node>/ mount without a transport shim.
++   */
+   protected resolveBase(): string {
+-    const loc = (globalThis as { location?: { origin?: string } }).location
+-    return loc?.origin !== undefined && loc.origin !== 'null' ? loc.origin : INTERNAL_BASE
++    const loc = (globalThis as { location?: { origin?: string; href?: string } }).location
++    if (loc?.origin !== undefined && loc.origin !== 'null') {
++      return new URL('.', loc.href ?? `${loc.origin}/`).toString()
++    }
++    return `${INTERNAL_BASE}/`
++  }
++
++  /** Resolve a DSH transport path below the current document directory. */
++  protected resolvePath(path: string): URL {
++    return new URL(path.replace(/^\/+/, ''), this.resolveBase())
+   }
+ 
+   protected mintRpcId(): RpcId {
+@@ -315,7 +327,7 @@ export abstract class AbstractApiClient implements IApiClient {
+         ? AbortSignal.timeout(this.timeoutMs)
+         : AbortSignal.any([AbortSignal.timeout(this.timeoutMs), signal])
+       : signal
+-    const response = await this.doFetch(new URL(path, this.resolveBase()), {
++    const response = await this.doFetch(this.resolvePath(path), {
+       method: 'POST',
+       headers: { 'content-type': 'application/json' },
+       body: JSON.stringify(body),
+@@ -372,7 +384,7 @@ export abstract class AbstractApiClient implements IApiClient {
+     frameSchema: z.ZodType<F>,
+     onOpen?: () => void,
+   ): AsyncGenerator<RpcRequest<F>> {
+-    const response = await this.doFetch(new URL(path, this.resolveBase()), { signal })
++    const response = await this.doFetch(this.resolvePath(path), { signal })
+     if (!response.ok || response.body === null) throw new Error(`transport failure for ${path}: HTTP ${response.status}`)
+     onOpen?.()
+     const reader = response.body.getReader()
+diff --git a/packages/host/apiproxy/tests/fetch-carrier.spec.ts b/packages/host/apiproxy/tests/fetch-carrier.spec.ts
+index 2000f708b..a0e203955 100644
+--- a/packages/host/apiproxy/tests/fetch-carrier.spec.ts
++++ b/packages/host/apiproxy/tests/fetch-carrier.spec.ts
+@@ -769,7 +769,7 @@ describe('envelope observation', () => {
+ })
+ 
+ describe('resolveBase', () => {
+-  it('prefers a real location.origin and falls back to the internal authority', async () => {
++  it('resolves browser transport below the current document directory and falls back to the internal authority', async () => {
+     class Probe extends AbstractApiClient {
+       urls: string[] = []
+       protected async doFetch(input: URL): Promise<Response> {
+@@ -788,12 +788,12 @@ describe('resolveBase', () => {
+     await probe.sessions.list({})
+     expect(probe.urls[0]).toMatch(/^http:\/\/dsh\.internal\//)
+ 
+-    const globalWithLocation = globalThis as { location?: { origin?: string } }
+-    globalWithLocation.location = { origin: 'http://host.example' }
++    const globalWithLocation = globalThis as { location?: { origin?: string; href?: string } }
++    globalWithLocation.location = { origin: 'http://host.example', href: 'http://host.example/v1/web/node/' }
+     try {
+       const probe2 = new Probe()
+       await probe2.sessions.list({})
+-      expect(probe2.urls[0]).toMatch(/^http:\/\/host\.example\//)
++      expect(probe2.urls[0]).toBe('http://host.example/v1/web/node/api/session.list')
+       globalWithLocation.location = { origin: 'null' } // sandboxed iframe shape
+       const probe3 = new Probe()
+       await probe3.sessions.list({})

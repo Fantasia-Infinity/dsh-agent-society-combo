@@ -19,13 +19,40 @@
 | 组件 | 固定 commit |
 |---|---|
 | deepseek-harness | `e181408c9aa99a6a745ff473b40b422eb57b97f8` |
-| dsh-TUI | `3a88f33cf98f8cfc9b47a131d3dced7595d789bf` |
-| AgentSociety | `4861347c3ddd20668318eacee858c8e63d8f2ab1` |
+| dsh-TUI | `1f89bbe2c5941515e4e370669552d4d2d0084aac` |
+| AgentSociety | `f234b0e0bee292b7026f3087d6a55c95248f6ba2` |
 | dsh-anchored-standard | `0a38616c1b7ce4219b6d94d95c89f34a90741616` |
 | dsh-opencode-full（可选） | `f4d4dda7c2ab8032ed169a770db3594cf98ea638` |
 
 默认 TUI preset：`anchored-standard`。`standard` / `code` / `minimal` /
 `cordis` 仍保留可选（安装时 `--preset standard`，或 TUI 内 `/preset`）。
+
+## 最近更新：跨设备 DSH Web
+
+当前组合已集成 AgentSociety 的原生 DSH Web 远程访问能力：
+
+- `agent web-bridge` 通过设备主动出站的 WebSocket 隧道把本地 DSH Web 接入 Hub，不需要把设备的 `3080` 端口暴露到公网。
+- 浏览器访问 `https://<hub>/v1/web/<node_id>/`；Hub 负责认证、节点权限和透明 HTTP/WS 转发，不改写 HTML、不注入全局运行时脚本。
+- DSH Web 使用原生相对 URL，API/RPC、插件、静态资源、manifest、favicon、HMR，以及 `events.mux` / `events.host` 事件 WebSocket 都支持节点挂载路径。
+- bridge 默认自动启动 `agent-society-web` profile；已有 `agent web` 时复用现有服务，bridge 只会停止自己启动的子进程。
+- bridge 启动时会幂等创建默认 workspace（默认当前用户 home），并在浏览器加载后自动进入该 workspace。
+
+安装或更新完成后，在已配置 Hub 的设备上运行：
+
+```bash
+agent web-bridge
+```
+
+常用配置：
+
+```bash
+AGENT_DSH_WEB_TARGET=http://127.0.0.1:3080
+AGENT_DSH_WEB_DEFAULT_WORKSPACE=/path/to/workspace
+AGENT_DSH_WEB_BRIDGE_START=0  # 禁用自动启动，要求已有 DSH Web
+```
+
+同一 `node_id` 只运行一个 bridge；多个 bridge 会互相替换隧道。完整协议和安全边界见 AgentSociety 的 [`docs/dsh-web-hub-bridge.md`](https://github.com/Fantasia-Infinity/AgentSociety/blob/main/docs/dsh-web-hub-bridge.md)。
+
 
 ## 一条命令安装
 
@@ -113,6 +140,26 @@ dsh-web                                # 直接启动 agent-society-web profile
 
 TUI 与 Web 是同一个 dsh core 上的两个 UI adapter，共享
 `~/.dsh/sessions`、插件、preset 与模型凭据。
+
+
+## AgentSociety Web Bridge 使用方式
+
+Combo 安装器会创建包含 AgentSociety 核心插件的 `agent-society-web` profile，`agent web` 和 `agent web-bridge` 共享同一份 `$DSH_HOME`、session、插件和模型配置。只需先完成一次 Hub 配置：
+
+```bash
+agent setup       # 配置模型和 Hub
+agent connect     # 用 Hub 账号获取本机节点凭据
+agent web-bridge  # 启动本机 Web，并通过 Hub 发布
+```
+
+如果希望让 bridge 使用另一个本地端口，必须确保目标仍然是 loopback 地址：
+
+```bash
+AGENT_DSH_WEB_TARGET=http://127.0.0.1:3090 agent web-bridge
+```
+
+bridge 会等待本地 DSH Web 就绪、注册 `dsh_web` 节点能力，并转发浏览器的 DSH RPC 和事件 WebSocket。默认 workspace 来自 `AGENT_DSH_WEB_DEFAULT_WORKSPACE`；未设置时使用当前用户 home。要完全由外部进程管理 DSH Web，可设置 `AGENT_DSH_WEB_BRIDGE_START=0`。
+
 
 ## 更新组合
 

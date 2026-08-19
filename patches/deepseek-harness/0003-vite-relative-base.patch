@@ -1,0 +1,16 @@
+diff --git a/apps/web/vite.config.ts b/apps/web/vite.config.ts
+index 7b9ef7a15..ae365aa65 100644
+--- a/apps/web/vite.config.ts
++++ b/apps/web/vite.config.ts
+@@ -90,6 +90,11 @@ function npmPackageOf(id: string): string | undefined {
+ }
+ 
+ export default defineConfig({
++  // Relative asset base: the browser UI is also served behind reverse
++  // proxies and the AgentSociety Hub web bridge at an arbitrary path prefix
++  // (/v1/web/<node>/), where absolute /assets/… references break. Relative
++  // paths resolve correctly at the origin root and under any prefix.
++  base: './',
+   plugins: [rejectStandaloneServe(), react()],
+   build: {
+     sourcemap: true,

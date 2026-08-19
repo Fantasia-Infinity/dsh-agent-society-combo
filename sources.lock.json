@@ -18,6 +18,10 @@
         {
           "path": "patches/deepseek-harness/0002-activity-status-persistence-test.patch",
           "sha256": "4f01541c71a2e2fc43dbe7131625dd2b6b1887fc32699e553bc258b7b55364b0"
+        },
+        {
+          "path": "patches/deepseek-harness/0003-vite-relative-base.patch",
+          "sha256": "106f86b6e27d72a83823e19e8354a9ab898475a702257183ba2336bd959bcbd5"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/deepseek-harness.git"

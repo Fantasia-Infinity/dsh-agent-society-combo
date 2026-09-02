@@ -1,5 +1,5 @@
 diff --git a/scripts/run.ts b/scripts/run.ts
-index 9c86685..97b4aa1 100644
+index 9c86685..e20c2a6 100644
 --- a/scripts/run.ts
 +++ b/scripts/run.ts
 @@ -12,11 +12,9 @@ import { resolve, join, dirname } from 'node:path'
@@ -44,8 +44,8 @@ index 9c86685..97b4aa1 100644
  const homePatch = join(dshHome, 'cordis.patch.yml')
  const diagFile = join(dshHome, 'last-boot-diagnostic.txt')
 +// Shipped preset root from the harness checkout (mirrors profile-boot's
-+// overlay of apps/cli/config/agent-presets onto the roster).
-+const SHIPPED_PRESET_ROOT = resolve(workspace, 'apps/cli/config/agent-presets')
++// overlay of packages/preset/agent-presets/presets onto the roster).
++const SHIPPED_PRESET_ROOT = resolve(workspace, 'packages/preset/agent-presets/presets')
  
  // --- Heap watchtower (leak forensics) ---------------------------------------
  // dsh-cc OOM'd twice in real long sessions (~4GB in 19-42min). The render
@@ -129,15 +129,16 @@ index 9c86685..97b4aa1 100644
  // --- Boot ---
  
  // Ensure the module fallback exists so the Loader can resolve every plugin.
- healProfilesModuleFallback(INSTALL_ANCHOR)
- 
+-healProfilesModuleFallback(INSTALL_ANCHOR)
++await healProfilesModuleFallback({ installAnchor: INSTALL_ANCHOR })
++
 +// The local TUI is not part of the DSH checkout's dependency closure. Expose
 +// this checkout through the same profile fallback that resolves core plugins.
 +const localTuiLink = join(profilesNm, '@deepseek-harness-tui', 'dsh-tui')
 +mkdirSync(dirname(localTuiLink), { recursive: true })
 +try { rmSync(localTuiLink, { recursive: true, force: true }) } catch {}
 +symlinkSync(resolve(here, '..'), localTuiLink, 'junction')
-+
+ 
  // Write the empty root config the Loader anchors on.
 +mkdirSync(profileDir, { recursive: true })
  writeFileSync(rootConfig, '# dsh-tui root — composed from bundle patches\n[]\n')

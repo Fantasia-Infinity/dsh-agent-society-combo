@@ -1,5 +1,5 @@
 diff --git a/scripts/build.sh b/scripts/build.sh
-index adb07d1..70dea2e 100644
+index adb07d1..e38ec28 100644
 --- a/scripts/build.sh
 +++ b/scripts/build.sh
 @@ -3,8 +3,8 @@
@@ -54,7 +54,7 @@ index adb07d1..70dea2e 100644
 +  link_pkg @deepseek-ai/cosmokit vendor/cosmokit
 +  link_pkg @deepseek-ai/schemastery vendor/schemastery
 +  link_pkg @deepseek-ai/dsh-agent packages/core/agent
-+  link_pkg @deepseek-ai/dsh-commands packages/ui/commands
++  link_pkg @deepseek-ai/dsh-commands packages/interaction/commands
 +  link_pkg @deepseek-ai/dsh-llm packages/llm/llm
 +  link_pkg @deepseek-ai/dsh-session packages/core/session
 +fi
@@ -76,3 +76,17 @@ index adb07d1..70dea2e 100644
  
  # @standard-schema/spec: external npm types referenced by cordis/schemastery
  # declarations, hoisted only inside the pnpm store.
+@@ -65,6 +98,13 @@ else
+   echo "build: @standard-schema/spec not found in pnpm store; skipLibCheck may still cover it" >&2
+ fi
+ 
++# v0.8.1+ vendors @dsh-std as a nested pnpm workspace; its packages must
++# be compiled before tsc can resolve @dsh-std/* type declarations.
++if [ -d "$ROOT/vendor/dsh-std" ] && [ -f "$ROOT/vendor/dsh-std/package.json" ]; then
++  echo "=== Building vendor/dsh-std ==="
++  (cd "$ROOT/vendor/dsh-std" && pnpm install --frozen-lockfile --ignore-scripts >/dev/null && pnpm -r build)
++fi
++
+ echo "=== Compiling src → lib/types ($("$TSC" --version)) ==="
+ "$TSC" -p tsconfig.json
+ # Incremental build cache is a build-time artifact — keep it out of the

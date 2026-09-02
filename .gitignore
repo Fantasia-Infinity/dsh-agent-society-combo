@@ -2,3 +2,4 @@
 sources/
 state/
 node_modules/
+.pnpm-store/

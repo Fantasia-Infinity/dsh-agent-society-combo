@@ -1,15 +1,18 @@
 diff --git a/packages/session/session-persistence/src/coordinator.ts b/packages/session/session-persistence/src/coordinator.ts
-index eb5f9714c..ef3641008 100644
+index c16fae6d4..2bcf6c38b 100644
 --- a/packages/session/session-persistence/src/coordinator.ts
 +++ b/packages/session/session-persistence/src/coordinator.ts
-@@ -1299,27 +1299,45 @@ export class PersistenceCoordinator<TornMarker = unknown> {
+@@ -1496,33 +1496,51 @@ export class PersistenceCoordinator<TornMarker = unknown> {
     * live suffix that was ahead of the stored prefix.
     */
    private async adoptLivePrefix(session: Session, seed: readonly SessionEvent[], stored: StoredPrefix<TornMarker>): Promise<void> {
--    const { meta, events, tornMarker } = stored
+-    const { meta, inheritedEventCount, events, tornMarker } = stored
 -    this.assertStoredId(session.header.id, meta)
 -    if (meta.cwd !== session.header.cwd) {
 -      throw new Error(`session "${session.header.id}" is already persisted at a different cwd (persisted: ${String(meta.cwd)}, live: ${String(session.header.cwd)}) (id collision)`)
+-    }
+-    if (inheritedEventCount !== session.inheritedEventCount) {
+-      throw new Error(`session "${session.header.id}" is already persisted with a different inherited event count (id collision)`)
 -    }
 -    this.assertVersion(meta)
 -    const storedEvents = snapshotStoredEvents(events, session.header.id)
@@ -32,10 +35,13 @@ index eb5f9714c..ef3641008 100644
 +        continue
 +      }
 +
-+      const { meta, events, tornMarker } = current
++      const { meta, inheritedEventCount, events, tornMarker } = current
 +      this.assertStoredId(id, meta)
 +      if (meta.cwd !== session.header.cwd) {
 +        throw new Error(`session "${id}" is already persisted at a different cwd (persisted: ${String(meta.cwd)}, live: ${String(session.header.cwd)}) (id collision)`)
++      }
++      if (inheritedEventCount !== session.inheritedEventCount) {
++        throw new Error(`session "${id}" is already persisted with a different inherited event count (id collision)`)
 +      }
 +      this.assertVersion(meta)
 +      const storedEvents = snapshotStoredEvents(events, id)
@@ -44,10 +50,13 @@ index eb5f9714c..ef3641008 100644
 +        throw new Error(`session "${id}" already has a persisted log on disk that does not match this live session (id collision)`)
 +      }
 +      // Truncate-only repair (no closers): the open turn is NOT closed here.
-+      if (tornMarker !== undefined) await this.backend.commitRepair(meta, tornMarker, [])
++      if (tornMarker !== undefined) await this.backend.commitRepair(current, tornMarker, [])
 +      this.states.set(id, {
-+        meta: { ...meta },
-+        cursor: storedEvents.length,
++        storage: {
++          meta: { ...meta },
++          inheritedEventCount,
++        },
++        cursor: SessionLogOffset(storedEvents.length),
 +        materialized: true,
 +        owner: session,
 +      })
@@ -56,10 +65,13 @@ index eb5f9714c..ef3641008 100644
 +      return
      }
 -    // Truncate-only repair (no closers): the open turn is NOT closed here.
--    if (tornMarker !== undefined) await this.backend.commitRepair(meta, tornMarker, [])
+-    if (tornMarker !== undefined) await this.backend.commitRepair(stored, tornMarker, [])
 -    this.states.set(session.header.id, {
--      meta: { ...meta },
--      cursor: storedEvents.length,
+-      storage: {
+-        meta: { ...meta },
+-        inheritedEventCount,
+-      },
+-      cursor: SessionLogOffset(storedEvents.length),
 -      materialized: true,
 -      owner: session,
 -    })
@@ -69,10 +81,10 @@ index eb5f9714c..ef3641008 100644
  
    private async flush(session: Session): Promise<void> {
 diff --git a/packages/session/session-persistence/tests/persistence.spec.ts b/packages/session/session-persistence/tests/persistence.spec.ts
-index 50ad798e0..4d423d0b1 100644
+index dd002882f..389b6d147 100644
 --- a/packages/session/session-persistence/tests/persistence.spec.ts
 +++ b/packages/session/session-persistence/tests/persistence.spec.ts
-@@ -936,6 +936,58 @@ describe('PersistenceCoordinator session preparations', () => {
+@@ -1067,6 +1067,59 @@ describe('PersistenceCoordinator session preparations', () => {
      }
    })
  
@@ -95,6 +107,7 @@ index 50ad798e0..4d423d0b1 100644
 +    // eight-event log and forces a reload before any suffix is appended.
 +    const stalePrefix = {
 +      meta: structuredClone(backend.store.get(id)!.meta),
++      inheritedEventCount: SessionLogOffset(backend.store.get(id)!.inheritedEventCount ?? 0),
 +      events: structuredClone(oneTurnLog()),
 +      revision: memoryRevision(backend.store.get(id)!),
 +    }
@@ -109,17 +122,17 @@ index 50ad798e0..4d423d0b1 100644
 +      .mockResolvedValueOnce(currentRevision)
 +      .mockImplementation(readStoredRevision)
 +
-+    let coordinator!: PersistenceCoordinator<never>
 +    const fiber = await ctx.plugin(Object.assign((inner: Context) => {
-+      coordinator = new PersistenceCoordinator(inner, backend)
++      new PersistenceCoordinator(inner, backend)
 +    }, { inject: ['sessions'] }))
 +
 +    try {
 +      const live = ctx.sessions.create(id, { seed, meta: meta(id) })
 +      await ctx.sessions.flush(live)
 +
-+      // Only the live constructor's end-seed is appended; the overlapping
-+      // six/seven suffix is not written twice.
++      // The durable log already contains the live turn suffix, so only the
++      // constructor's end-seed marker may be appended after the stale prefix
++      // is refreshed; the live turn must not be duplicated.
 +      expect(backend.store.get(id)?.events.map(event => event.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8])
 +      expect(backend.appendAttempts).toBe(1)
 +    } finally {

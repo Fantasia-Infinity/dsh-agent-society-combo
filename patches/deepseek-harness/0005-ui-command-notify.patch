@@ -1,0 +1,134 @@
+diff --git a/packages/client/ui-conversation/src/client/apply.ts b/packages/client/ui-conversation/src/client/apply.ts
+index 4c8527c1e..6847aa48d 100644
+--- a/packages/client/ui-conversation/src/client/apply.ts
++++ b/packages/client/ui-conversation/src/client/apply.ts
+@@ -292,6 +292,7 @@ export function apply(ctx: Context): void {
+           toggleCommandMenu: undefined,
+           stop: undefined,
+           command: undefined,
++          notify: undefined,
+           hooks: {
+             notices: ABSENT_NOTICES,
+             lexicon: ABSENT_LEXICON,
+@@ -347,6 +348,7 @@ export function apply(ctx: Context): void {
+           const result = await session.command(line)
+           return result.ok && result.value.matched
+         },
++        notify: (level, text) => shell.notify(level, text),
+         hooks: {
+           notices: shell.notices,
+           lexicon: shell.lexicon,
+diff --git a/packages/client/ui-conversation/src/client/contract/slots.ts b/packages/client/ui-conversation/src/client/contract/slots.ts
+index 5107c319b..b4e40d304 100644
+--- a/packages/client/ui-conversation/src/client/contract/slots.ts
++++ b/packages/client/ui-conversation/src/client/contract/slots.ts
+@@ -271,6 +271,8 @@ export interface ComposerBarInjected {
+   toggleCommandMenu: ((selection: EditSelection) => void) | undefined
+   stop: (() => void) | undefined
+   command: ((line: string) => Promise<boolean>) | undefined
++  /** Surface detached command failures in the owning session's composer. */
++  notify?: ((level: 'info' | 'error', text: string) => void) | undefined
+   hooks: {
+     notices: ObservableSnapshot<InputNotice | null>
+     lexicon: ObservableSnapshot<ReadonlyMap<'/' | '@', readonly string[]>>
+diff --git a/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx b/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
+index c223459c5..8484870c3 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
+@@ -41,7 +41,7 @@ export type InputBarProps = ComposerBarProps
+ 
+ export const InputBar = memo(function InputBar({
+   useSession, useInput, inputActions, keyboard, addImages, removeImage, draftImages,
+-  resolveSubmitMode, toggleCommandMenu, stop, command, t,
++  resolveSubmitMode, toggleCommandMenu, stop, command, notify, t,
+   renderSlot, useNotices, useLexicon, useMenuLauncher,
+   useProjection, sessionId, variant, disabled: inert = false, blocked,
+   workspacePickerOpen = false, onRequestWorkspace,
+@@ -330,7 +330,7 @@ export const InputBar = memo(function InputBar({
+   // or while the command face is absent with the session).
+   const accessSelect: ReactNode = command === undefined
+     ? null
+-    : <PermissionSelect key={sessionId} value={permissions} locked={locked} command={command} t={t} />
++    : <PermissionSelect key={sessionId} value={permissions} locked={locked} command={command} notify={notify} t={t} />
+ 
+   // Claim ghost hint: rendered by CSS as generated content after the last
+   // paragraph while the claim's args are blank (a hint implies a single-line
+diff --git a/packages/client/ui-conversation/src/client/skeleton/PermissionSelect.tsx b/packages/client/ui-conversation/src/client/skeleton/PermissionSelect.tsx
+index b54049efe..aa968fd00 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/PermissionSelect.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/PermissionSelect.tsx
+@@ -79,11 +79,12 @@ export interface PermissionSelectProps {
+   value: PermissionSelectValue | undefined
+   locked: boolean
+   command: (line: string) => Promise<boolean>
++  notify: ((level: 'info' | 'error', text: string) => void) | undefined
+   /** The owning bar's locale seat, passed down as a plain prop. */
+   t: ComposerBarProps['t']
+ }
+ 
+-export function PermissionSelect({ value, locked, command, t }: PermissionSelectProps) {
++export function PermissionSelect({ value, locked, command, notify, t }: PermissionSelectProps) {
+   const [pick, setPick] = useState<string | null>(null)
+   const [open, setOpen] = useState(false)
+   const [confirmation, setConfirmation] = useState<string | null>(null)
+@@ -119,8 +120,13 @@ export function PermissionSelect({ value, locked, command, t }: PermissionSelect
+   const submit = (id: string): void => {
+     setPick(id)
+     void command(`/permission ${id}`)
+-      .catch(() => false)
+-      .then(() => { setPick(null) })
++      .then((matched) => {
++        if (!matched) notify?.('error', 'Permission command was rejected or the session is unavailable')
++      })
++      .catch((error: unknown) => {
++        notify?.('error', error instanceof Error ? error.message : String(error))
++      })
++      .finally(() => { setPick(null) })
+   }
+ 
+   const choose = (id: string): void => {
+diff --git a/packages/client/ui-conversation/tests/input-bar.client.spec.tsx b/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
+index 0edc8b9ef..87ee5263b 100644
+--- a/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
++++ b/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
+@@ -81,6 +81,7 @@ interface BenchOptions {
+   placeholder?: string
+   t?: InputBarProps['t']
+   command?: (line: string) => Promise<boolean>
++  notify?: (level: 'info' | 'error', text: string) => void
+   accessory?: React.ReactNode
+   overlay?: React.ReactNode
+   leftItems?: React.ReactNode
+@@ -191,6 +192,7 @@ function bench(over?: BenchOptions) {
+     useMenuLauncher: bindSnapshotSelector(menuLauncher),
+     stop,
+     command: over?.command ?? (() => Promise.resolve(true)),
++    notify: over?.notify ?? vi.fn(),
+     // Mirrors the real lookup chain (conversation namespace, then common).
+     t: over?.t ?? makeTranslate(zh, commonZh),
+     renderSlot,
+@@ -1372,6 +1374,24 @@ describe('command launcher chrome and control seats', () => {
+       .toEqual(['Review Only', 'Project Files', 'Operator Mode', 'Custom Mode', '__proto__'])
+   })
+ 
++  it('surfaces permission command rejection instead of silently clearing the pick', async () => {
++    const command = vi.fn(() => Promise.resolve(false))
++    const notify = vi.fn()
++    const permissions = {
++      options: [
++        { value: 'read-only', name: 'read-only' },
++        { value: 'workspace-write', name: 'workspace-write' },
++      ],
++      currentValue: 'read-only',
++    }
++    const { view } = bench({ permissions, command, notify })
++    fireEvent.click(view.getByLabelText(/^访问模式/))
++    fireEvent.click(view.getAllByRole('menuitem')[1]!)
++    await act(async () => {})
++    expect(notify).toHaveBeenCalledWith('error', expect.stringContaining('rejected'))
++    expect((view.getByLabelText(/^访问模式/) as HTMLButtonElement).disabled).toBe(false)
++  })
++
+   it('requires explicit risk acknowledgement before submitting full access', async () => {
+     const command = vi.fn(() => Promise.resolve(true))
+     const permissions = {

@@ -2,7 +2,7 @@
   "checksums": {},
   "components": {
     "deepseek-harness": {
-      "commit": "e181408c9aa99a6a745ff473b40b422eb57b97f8",
+      "commit": "c12ad841a4cf774792e2b32e3fa5559fea93b1a5",
       "files": [
         {
           "dest": "scripts/migrate-session-projection-cache.ts",
@@ -12,63 +12,71 @@
       ],
       "patches": [
         {
-          "path": "patches/deepseek-harness/0001-activity-status-session-event.patch",
-          "sha256": "e4a5f4aaba074e996ccf0103d8ae6d0ea209bc861e0f1fca9dedc241b513f04d"
-        },
-        {
-          "path": "patches/deepseek-harness/0002-activity-status-persistence-test.patch",
-          "sha256": "4f01541c71a2e2fc43dbe7131625dd2b6b1887fc32699e553bc258b7b55364b0"
+          "path": "patches/deepseek-harness/0003-live-adoption-revision-retry.patch",
+          "sha256": "2c61c2e450e40bb18f3cc5e86256678390c77cd346421b9730287b75cb3386a2"
         },
         {
           "path": "patches/deepseek-harness/0004-native-web-base-path.patch",
-          "sha256": "6c69d90fb5dd9d3abc047244d119920654a9e0d584f94c7853a45225f6fa1266"
+          "sha256": "13e89dde61f06cdc4c5840edca7581b8571c61fd7d2b0010cdbaac6049077b84"
+        },
+        {
+          "path": "patches/deepseek-harness/0005-ui-command-notify.patch",
+          "sha256": "75e7ee1f190ffe9811117f7e7d6c0b6cc8ed1c631fee401956df8b880413d98a"
+        },
+        {
+          "path": "patches/deepseek-harness/0007-profile-runtime-fact.patch",
+          "sha256": "ccf9c408c3328396d64a9ea68d66dec2f813af28756437fa4be689dfb7f91845"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/deepseek-harness.git"
     },
     "dsh-tui": {
-      "commit": "1f89bbe2c5941515e4e370669552d4d2d0084aac",
+      "commit": "3cf843f502550b98fa03330cdb045024ab0204c8",
       "files": [
         {
           "dest": "bin/dsh-tui-local.js",
           "executable": true,
           "sha256": "295012cff584f94ee05d3a1b7805b9aba655b33ae983e40b2d60ad75a64d4e51",
           "src": "patches/dsh-tui/files/bin/dsh-tui-local.js"
-        },
-        {
-          "dest": "pnpm-lock.yaml",
-          "sha256": "696b7abc4df8ae0cb24d9a91ae7f22f823f9941638830c6e4c6ea03520eddf5e",
-          "src": "patches/dsh-tui/files/pnpm-lock.yaml"
         }
       ],
       "patches": [
         {
           "path": "patches/dsh-tui/0001-standalone-source-launcher.patch",
-          "sha256": "500d3e2c8917186f3c622f122c34671954f4b372ff7dbd914fc4ac129b55ed95"
+          "sha256": "5e69f44e203d13e948b249a45543879de1e11b3bfd3ed8bfe44fc9b5a8a373e0"
         },
         {
           "path": "patches/dsh-tui/0004-build-against-sibling-checkout.patch",
-          "sha256": "c6ed021c9ecd40dfcc52977f842203bd905f6de76eb2970e273cd767a33a8a75"
-        },
-        {
-          "path": "patches/dsh-tui/0006-pnpm-overrides-rc7.patch",
-          "sha256": "e615c23f02e20887a4c4bcfe9f755a47fdadd1fed5d11fa39aeaec97b069c15a"
+          "sha256": "2613e767fb42e98914c4167c4648dce67c441dc6163dca509db1d2ae7dc582f4"
         },
         {
           "path": "patches/dsh-tui/0007-rc7-cmdlineargs-ctx-get.patch",
           "sha256": "67916f42c3f083e96d095edd979ee2cd10cb6b795821e0b542f1120a40abb2ee"
         },
         {
-          "path": "patches/dsh-tui/0008-dsh-std-build.patch",
-          "sha256": "0e0ba54ada92a30826ad91e947298c7bf498e635ae6310922de154dccc09a1ff"
+          "path": "patches/dsh-tui/0009-dsh-alpha-api-adaptation.patch",
+          "sha256": "981b7d2537e3bfcd15c82079cb275b76b4e7edc8779c9c20f29d2652e3468cc5"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/dsh-TUI.git"
     },
-    "agent-society": {
-      "commit": "15f6c32",
+      "agent-society": {
+      "commit": "15f6c324afc538f0f0fd18f1d02ceca6950b6825",
       "files": [],
-      "patches": [],
+      "patches": [
+        {
+          "path": "patches/agent-society/0001-worker-state-and-web-tunnel-hardening.patch",
+          "sha256": "f16e5114640902fb1754d607d24bade72ee8589792cd4a193bb347dc21e1230c"
+        },
+        {
+          "path": "patches/agent-society/0003-dsh-first-runtime.patch",
+          "sha256": "18d05adf76a37501dbea5891e256d26007c5282de710d14ee6eaf86d4135fe6b"
+        },
+        {
+          "path": "patches/agent-society/0004-cache-friendly-context.patch",
+          "sha256": "447e7c893be5fa7310ccfc5b5bcc13dbecbcb219c0a88aae7ca93be069701406"
+        }
+      ],
       "repo": "https://github.com/Fantasia-Infinity/AgentSociety.git"
     },
     "dsh-anchored-standard": {
@@ -85,11 +93,27 @@
     }
   },
   "defaultPreset": "anchored-standard",
+  "published": {
+    "dsh": {
+      "package": "@deepseek-ai/dsh",
+      "version": "0.1.2-alpha.4",
+      "source": "Fantasia-Infinity/deepseek-harness",
+      "commit": "c12ad841a4cf774792e2b32e3fa5559fea93b1a5"
+    },
+    "agentSocietyPlugin": {
+      "package": "@agent-society/dsh-agent-society",
+      "source": "Fantasia-Infinity/AgentSociety"
+    },
+    "agentHost": {
+      "package": "@agent-society/agent-host",
+      "source": "Fantasia-Infinity/AgentSociety"
+    }
+  },
   "name": "dsh-agent-society-combo",
   "supportedPresets": [
     "anchored-standard",
     "standard",
-    "code",
+    "ptc",
     "minimal",
     "cordis"
   ],

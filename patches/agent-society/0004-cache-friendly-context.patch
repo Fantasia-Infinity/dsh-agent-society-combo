@@ -1,0 +1,2213 @@
+diff --git a/dsh-plugin/src/directory.ts b/dsh-plugin/src/directory.ts
+index d23e1ee..50e8eff 100644
+--- a/dsh-plugin/src/directory.ts
++++ b/dsh-plugin/src/directory.ts
+@@ -50,6 +50,40 @@ export interface DirectoryMirror {
+ export const MIRROR_MAX_INVOCATIONS = 10
+ export const MIRROR_MAX_CONSENSUS_ENTRIES = 24
+ 
++/** Prompt-facing directory data. Volatile activity timestamps and invocation
++ * history deliberately stay out of this shape so an idle mirror refresh does
++ * not invalidate the shared-context message. */
++export interface SharedDirectoryRow {
++  readonly session_id: string
++  readonly actor_id?: string
++  readonly title?: string
++  readonly workspace: string
++  readonly status: string
++  readonly session_mode: string
++  readonly tool_policy: string
++}
++
++/** Stable, semantic state used by the balanced shared-context renderer. */
++export interface SharedContextState {
++  readonly directorySeq: number
++  readonly consensusSeq: number
++  readonly consensusEntries: readonly ConsensusEntry[]
++  readonly directoryRows: readonly SharedDirectoryRow[]
++}
++
++export type SharedContextUpdateKind = 'initial' | 'delta' | 'snapshot'
++
++export interface SharedContextUpdate {
++  readonly kind: SharedContextUpdateKind
++  readonly text: string
++  readonly fingerprint: string
++}
++
++export const BALANCED_INITIAL_BUDGET_CHARS = 1_600
++export const BALANCED_DELTA_BUDGET_CHARS = 800
++const BALANCED_CONSENSUS_LINE_CHARS = 220
++const BALANCED_DIRECTORY_LINE_CHARS = 180
++
+ export function mirrorPath(dshHome: string): string {
+   return join(dshHome, 'agent-society-directory.json')
+ }
+@@ -243,6 +277,264 @@ export function loadProjectionActivity(
+   return activity
+ }
+ 
++/**
++ * Project a mirror into the semantic fields that may enter a model request.
++ * The projection is intentionally independent of object insertion order and
++ * `last_active_at`; both are cache-hostile sources of otherwise meaningless
++ * prompt churn.
++ */
++export function normalizeSharedContextState(
++  mirror: DirectoryMirror,
++  currentSessionId?: string,
++): SharedContextState {
++  const latestBySession = new Map<string, ConsensusEntry>()
++  const unscoped: ConsensusEntry[] = []
++  for (const entry of mirror.consensus.entries) {
++    if (
++      entry === null ||
++      typeof entry !== 'object' ||
++      typeof entry.summary !== 'string' ||
++      typeof entry.kind !== 'string'
++    ) continue
++    if (entry.session_id) {
++      if (entry.session_id === currentSessionId) continue
++      const previous = latestBySession.get(entry.session_id)
++      if (previous === undefined || consensusEntryCompare(entry, previous) < 0) {
++        latestBySession.set(entry.session_id, entry)
++      }
++    } else {
++      unscoped.push(entry)
++    }
++  }
++  const consensusEntries = [...latestBySession.values(), ...unscoped]
++    .sort(consensusEntryCompare)
++    .slice(0, MIRROR_MAX_CONSENSUS_ENTRIES)
++
++  const directoryRows = Object.values(mirror.rows)
++    .filter((row) => row.session_id !== currentSessionId)
++    .map(toSharedDirectoryRow)
++    .sort((a, b) => stringCompare(a.session_id, b.session_id))
++
++  return {
++    directorySeq: finiteRevision(mirror.seq),
++    consensusSeq: finiteRevision(mirror.consensus.seq),
++    consensusEntries,
++    directoryRows,
++  }
++}
++
++/** Stable semantic fingerprint; revisions are intentionally excluded. */
++export function sharedContextStateFingerprint(state: SharedContextState): string {
++  return JSON.stringify({
++    consensusEntries: state.consensusEntries.map((entry) => ({
++      seq: entry.seq,
++      kind: entry.kind,
++      ...(entry.session_id ? { session_id: entry.session_id } : {}),
++      summary: entry.summary,
++    })),
++    directoryRows: state.directoryRows,
++  })
++}
++
++/**
++ * Render one cache-friendly update. A removed row/entry produces a fresh
++ * compact snapshot because a delta cannot safely prove that no other stale
++ * state remains in a model's earlier transcript.
++ */
++export function renderSharedContextUpdate(
++  previous: SharedContextState | undefined,
++  current: SharedContextState,
++): SharedContextUpdate | undefined {
++  const fingerprint = sharedContextStateFingerprint(current)
++  if (previous === undefined) {
++    if (!hasSharedContext(current)) return undefined
++    return {
++      kind: 'initial',
++      text: renderCompactSnapshot(current, 'initial'),
++      fingerprint,
++    }
++  }
++  if (sharedContextStateFingerprint(previous) === fingerprint) return undefined
++
++  const previousConsensus = new Map(
++    previous.consensusEntries.map((entry) => [consensusEntryKey(entry), entry]),
++  )
++  const currentConsensus = new Map(
++    current.consensusEntries.map((entry) => [consensusEntryKey(entry), entry]),
++  )
++  const previousDirectory = new Map(
++    previous.directoryRows.map((row) => [row.session_id, row]),
++  )
++  const currentDirectory = new Map(
++    current.directoryRows.map((row) => [row.session_id, row]),
++  )
++
++  const removed =
++    [...previousConsensus.keys()].some((key) => !currentConsensus.has(key)) ||
++    [...previousDirectory.keys()].some((key) => !currentDirectory.has(key))
++  if (removed) {
++    return {
++      kind: 'snapshot',
++      text: renderCompactSnapshot(current, 'snapshot'),
++      fingerprint,
++    }
++  }
++
++  const changes: string[] = []
++  for (const entry of current.consensusEntries) {
++    const old = previousConsensus.get(consensusEntryKey(entry))
++    if (old === undefined) {
++      changes.push(`+ 共识 ${renderConsensusEntry(entry)}`)
++    } else if (!sameConsensusEntry(old, entry)) {
++      changes.push(`~ 共识 ${renderConsensusEntry(entry)}`)
++    }
++  }
++  for (const row of current.directoryRows) {
++    const old = previousDirectory.get(row.session_id)
++    if (old === undefined) {
++      changes.push(`+ 目录 ${renderDirectoryRow(row)}`)
++    } else if (!sameDirectoryRow(old, row)) {
++      changes.push(`~ 目录 ${renderDirectoryRow(row)}`)
++    }
++  }
++  if (changes.length === 0) return undefined
++
++  const text = renderDelta(current, changes)
++  if (text.length > BALANCED_DELTA_BUDGET_CHARS) {
++    return {
++      kind: 'snapshot',
++      text: renderCompactSnapshot(current, 'snapshot'),
++      fingerprint,
++    }
++  }
++  return { kind: 'delta', text, fingerprint }
++}
++
++function finiteRevision(value: unknown): number {
++  return typeof value === 'number' && Number.isFinite(value) ? value : 0
++}
++
++function stringCompare(a: string, b: string): number {
++  return a < b ? -1 : a > b ? 1 : 0
++}
++
++/** Oldest-to-newest comparison for latest-per-session selection, then newest
++ * first for rendering. Returning a negative value means `a` is preferred. */
++function consensusEntryCompare(a: ConsensusEntry, b: ConsensusEntry): number {
++  if (a.seq !== b.seq) return b.seq - a.seq
++  return (
++    stringCompare(a.session_id ?? '', b.session_id ?? '') ||
++    stringCompare(a.kind, b.kind) ||
++    stringCompare(a.summary, b.summary)
++  )
++}
++
++function consensusEntryKey(entry: ConsensusEntry): string {
++  return entry.session_id
++    ? `session:${entry.session_id}`
++    : `event:${entry.seq}:${entry.kind}:${entry.summary}`
++}
++
++function sameConsensusEntry(a: ConsensusEntry, b: ConsensusEntry): boolean {
++  return (
++    a.seq === b.seq &&
++    a.kind === b.kind &&
++    a.session_id === b.session_id &&
++    a.summary === b.summary
++  )
++}
++
++function toSharedDirectoryRow(row: DirectoryRow): SharedDirectoryRow {
++  const title = typeof row.title === 'string' ? row.title.trim() : ''
++  return {
++    session_id: row.session_id,
++    ...(row.actor_id ? { actor_id: row.actor_id } : {}),
++    ...(title ? { title } : {}),
++    workspace: row.workspace || 'unknown workspace',
++    status: row.status || 'unknown',
++    session_mode: row.session_mode || 'unknown',
++    tool_policy: row.tool_policy || 'unknown',
++  }
++}
++
++function sameDirectoryRow(a: SharedDirectoryRow, b: SharedDirectoryRow): boolean {
++  return (
++    a.session_id === b.session_id &&
++    a.actor_id === b.actor_id &&
++    a.title === b.title &&
++    a.workspace === b.workspace &&
++    a.status === b.status &&
++    a.session_mode === b.session_mode &&
++    a.tool_policy === b.tool_policy
++  )
++}
++
++function hasSharedContext(state: SharedContextState): boolean {
++  return state.consensusEntries.length > 0 || state.directoryRows.length > 0
++}
++
++function clipLine(value: string, max: number): string {
++  const compact = value.replace(/[\r\n]+/gu, ' ').trim()
++  return compact.length <= max ? compact : `${compact.slice(0, max - 1)}…`
++}
++
++function renderConsensusEntry(entry: ConsensusEntry): string {
++  const where = entry.session_id ? ` ${entry.session_id}` : ''
++  return clipLine(`[${entry.kind}]${where}: ${entry.summary}`, BALANCED_CONSENSUS_LINE_CHARS)
++}
++
++function renderDirectoryRow(row: SharedDirectoryRow): string {
++  const label = row.title || row.workspace || 'unknown workspace'
++  return clipLine(
++    `${row.session_id} | ${row.actor_id ?? '?'} | ${label} | ${row.status}`,
++    BALANCED_DIRECTORY_LINE_CHARS,
++  )
++}
++
++function renderDelta(state: SharedContextState, changes: readonly string[]): string {
++  return [
++    'AgentSociety 共享上下文增量（仅包含本轮变化）',
++    `revision: directory=${state.directorySeq}; consensus=${state.consensusSeq}`,
++    '未列出的条目保持不变；需要权威完整内容时使用 Hub MCP。',
++    ...changes.map((change) => clipLine(change, BALANCED_DIRECTORY_LINE_CHARS)),
++  ].join('\n')
++}
++
++function renderCompactSnapshot(
++  state: SharedContextState,
++  kind: 'initial' | 'snapshot',
++): string {
++  const consensus = state.consensusEntries.map(
++    (entry) => `- ${renderConsensusEntry(entry)}`,
++  )
++  const directory = state.directoryRows.map(
++    (row) => `- ${renderDirectoryRow(row)}`,
++  )
++  const header = [
++    kind === 'initial'
++      ? 'AgentSociety 共享上下文初始快照（有界提示）'
++      : 'AgentSociety 共享上下文紧凑快照（状态删除或无法增量化）',
++    `revision: directory=${state.directorySeq}; consensus=${state.consensusSeq}`,
++    '完整 objective/result 和目录详情请使用 Hub MCP；当前 session 已排除。',
++  ]
++  const build = (left: readonly string[], right: readonly string[]): string => [
++    ...header,
++    ...(left.length > 0 ? ['共识（每 session 最新一条）：', ...left] : []),
++    ...(right.length > 0 ? ['目录（按 session_id 排序）：', ...right] : []),
++    ...(left.length === 0 && right.length === 0 ? ['当前没有可用共享条目。'] : []),
++  ].join('\n')
++  let text = build(consensus, directory)
++  while (text.length > BALANCED_INITIAL_BUDGET_CHARS && directory.length > 0) {
++    directory.pop()
++    text = build(consensus, directory)
++  }
++  while (text.length > BALANCED_INITIAL_BUDGET_CHARS && consensus.length > 0) {
++    consensus.pop()
++    text = build(consensus, directory)
++  }
++  return text.slice(0, BALANCED_INITIAL_BUDGET_CHARS)
++}
++
+ // ── Prompt injection (bounded) ────────────────────────────────────────────
+ 
+ export const DIRECTORY_INDEX_SECTION = 'agent-society:directory-index'
+@@ -286,8 +578,8 @@ export function consensusPromptLines(
+  * change-detected snapshot is not re-injected. */
+ export const WORKFLOW_GUIDE =
+   '## AgentSociety 共享记忆\n' +
+-  '共识与目录快照仅在内容变化时注入（最近一次注入见会话历史）；' +
+-  '需要当前或完整内容时用 hub_context_read 读取；' +
++  '默认只追加一次紧凑初始快照，之后只追加结构化变化（最近一次见会话历史）；' +
++  '需要当前或完整内容时用 hub_context_read / hub_directory_list 读取；' +
+   '涉及某个会话时 hub_directory_get 下钻（depth 2 看其 digest）判断相关性后，' +
+   'hub_ask 携带 target_session_id 在该会话上下文中发问（回答写回该会话）；' +
+   '得出可复用结论时 hub_context_append 写回。'
+
+diff --git a/dsh-plugin/src/prompt-guard.ts b/dsh-plugin/src/prompt-guard.ts
+index af4e2e0..2433e1a 100644
+--- a/dsh-plugin/src/prompt-guard.ts
++++ b/dsh-plugin/src/prompt-guard.ts
+@@ -1,23 +1,20 @@
+ /**
+  * `agent-society-directory-index`: bounded shared-context injection guard.
+  *
+- * Runs after the ordinary system-prompt assembly (prepend listener) and
+- * appends two bounded sections — the consensus one-liners and the session/
+- * agent directory index — read from the local mirror maintained by the
+- * directory sync plugin. The combined text stays under 4KB; on any failure
+- * the original assembly is returned unchanged (same fail-safe philosophy as
+- * the tool guards).
++ * `balanced` (the default) adds one small initial snapshot and then only
++ * semantic deltas as durable user messages through the public `agent/pre-step`
++ * waterfall. `legacy` keeps the old runtime-context snapshot for rollback;
++ * `off` keeps only the static workflow guide. No mode rewrites the dsh
++ * surface or starts a new request series.
+  *
+- * KV-cache contract: the injection only APPENDS to the assembled sections
+- * (the core system prefix is never touched), and the rendered text changes
+- * only on semantic events — a new consensus digest or a session status/title
+- * change. Idle churn (mirror refreshes, last_active_at) must not alter the
+- * bytes; directory rows therefore sort stably by session_id. The section is
+- * model-facing only: it is never written into the session log, so no UI
+- * surface renders it as a user-visible message.
++ * KV-cache contract: the system prompt stays static and balanced updates are
++ * append-only messages. Idle mirror refreshes and last_active_at changes do
++ * not produce a message; full objective/result data remains available through
++ * Hub MCP on demand.
+  */
+ 
+ import type { Context } from '@deepseek-ai/cordis'
++import { createUserMessage } from '@deepseek-ai/dsh-llm'
+ import { homedir } from 'node:os'
+ import { join, resolve } from 'node:path'
+ 
+@@ -25,15 +22,29 @@ import {
+   buildSharedContextSections,
+   loadMirror,
+   mirrorPath,
++  normalizeSharedContextState,
++  renderSharedContextUpdate,
+   WORKFLOW_GUIDE,
+ } from './directory.js'
++import { recordAgentSocietyMetrics } from './context-metrics.js'
+ 
+ export const name = 'agent-society-directory-index'
+ export const inject: string[] = []
+ 
++export type SharedContextMode = 'balanced' | 'legacy' | 'off'
++
++export function sharedContextMode(
++  env: NodeJS.ProcessEnv = process.env,
++): SharedContextMode {
++  if (env.AGENT_SOCIETY_DIRECTORY === '0') return 'off'
++  const value = env.AGENT_SOCIETY_CONTEXT_MODE?.trim().toLowerCase()
++  return value === 'legacy' || value === 'off' ? value : 'balanced'
++}
++
+ export function apply(ctx: Context): void {
+   const dshHome = resolve(process.env.DSH_HOME?.trim() || join(homedir(), '.dsh'))
+   const path = mirrorPath(dshHome)
++  const mode = sharedContextMode()
+ 
+   // The workflow guide is static and lives in a system section: the model
+   // always knows how to reach shared memory, even on turns where the
+@@ -49,10 +60,66 @@ export function apply(ctx: Context): void {
+     })
+   }
+ 
+-  // Change detection: the snapshot is injected only when its bytes changed
+-  // since the last injection for this session (or on first sight). Idle
+-  // turns keep the request lean instead of appending an identical runtime
+-  // context on every step.
++  if (mode === 'balanced') {
++    // State is process-local because the durable session already owns the
++    // accepted messages. A new process seeing a session starts with one
++    // bounded snapshot, then follows semantic changes in that process.
++    const lastState = new Map<string, ReturnType<typeof normalizeSharedContextState>>()
++
++    ctx.on('agent/pre-step', async (payload, next) => {
++      const decision = await next()
++      if (decision.kind !== 'enter') return decision
++      try {
++        const sessionId = String(payload.agent.session.id)
++        const current = normalizeSharedContextState(loadMirror(path), sessionId)
++        const previous = lastState.get(sessionId)
++        const update = renderSharedContextUpdate(previous, current)
++        // Record an already-seen semantic state even when no message is
++        // needed, so sequence-only mirror refreshes never become future
++        // deltas. An empty first sight is not recorded: the first real data
++        // that arrives should be introduced as an initial snapshot.
++        if (previous !== undefined || update !== undefined) {
++          lastState.set(sessionId, current)
++        }
++        if (lastState.size > 1_024) {
++          const first = lastState.keys().next().value
++          if (typeof first === 'string') lastState.delete(first)
++        }
++        if (update === undefined) return decision
++        recordAgentSocietyMetrics(dshHome, {
++          context: {
++            kind: update.kind,
++            bytes: Buffer.byteLength(update.text, 'utf8'),
++            sessionId,
++          },
++        })
++        return {
++          ...decision,
++          messages: [
++            ...decision.messages,
++            createUserMessage({
++              content: [{ type: 'text', text: update.text }],
++              source: {
++                kind: 'plugin',
++                plugin: '@agent-society/dsh-agent-society',
++              },
++            }),
++          ],
++        }
++      } catch (error) {
++        ctx.logger.warn(
++          `agent-society-directory-index balanced update failed; keeping the proposed step: ${error instanceof Error ? error.message : String(error)}`,
++        )
++        return decision
++      }
++    })
++    return
++  }
++
++  if (mode === 'off') return
++
++  // Legacy mode: retain the former bounded runtime-context projection for
++  // rollback and A/B comparison. It is intentionally not used by balanced.
+   const lastInjected = new Map<string, string>()
+ 
+   ctx.on(
+
+diff --git a/dsh-plugin/src/session-digest-watcher.ts b/dsh-plugin/src/session-digest-watcher.ts
+index e61f777..37f5fce 100644
+--- a/dsh-plugin/src/session-digest-watcher.ts
++++ b/dsh-plugin/src/session-digest-watcher.ts
+@@ -23,24 +23,36 @@
+  */
+ 
+ import type { Context } from '@deepseek-ai/cordis'
+-import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
+ import type {} from '@deepseek-ai/cordis-plugin-timer'
+ import Schema from '@deepseek-ai/schemastery'
+-import { createHash } from 'node:crypto'
++import { createHash, randomUUID } from 'node:crypto'
+ import { homedir, hostname, userInfo } from 'node:os'
+-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
++import {
++  closeSync,
++  mkdirSync,
++  openSync,
++  readFileSync,
++  unlinkSync,
++  writeFileSync,
++  writeSync,
++} from 'node:fs'
+ import { dirname, resolve } from 'node:path'
+ 
++import type { EpochHeader } from '@deepseek-ai/dsh-session'
+ import { HubClient } from './hub-client.js'
+ import { loadProjectionActivity } from './directory.js'
+ import { buildSessionDigest } from './digest.js'
++import {
++  DEFAULT_SUMMARY_MAX_TOKENS,
++  SUMMARY_MAX_TOKENS_HARD_LIMIT,
++} from './summarizer.js'
+ import {
+   deterministicSummary,
+   summarizeLiveSession,
+   summarizeStandalone,
+-  type AssemblySnapshot,
+   type SummaryFields,
+ } from './summarizer.js'
++import { recordAgentSocietyMetrics } from './context-metrics.js'
+ 
+ export const name = 'agent-society-session-digest'
+ export const inject = ['timer']
+@@ -84,6 +96,11 @@ interface SessionLike {
+   readonly events: ReadonlyArray<{ time: number } | undefined>
+ }
+ 
++interface LiveSessionLike extends SessionLike {
++  requestHeader(): EpochHeader | undefined
++  deriveMessages(): unknown[]
++}
++
+ interface SessionsLike {
+   list(): SessionLike[]
+ }
+@@ -93,6 +110,7 @@ interface DigestState {
+ }
+ 
+ const MAX_ATTEMPTS = 3
++export const DIGEST_LEASE_SECONDS = 90
+ 
+ export function apply(ctx: Context, config: Config): void {
+   const hubUrl = config.hubUrl ?? process.env.AGENT_SOCIETY_HUB_URL?.trim()
+@@ -113,8 +131,17 @@ export function apply(ctx: Context, config: Config): void {
+   const nodeId = config.nodeId ?? host
+   const workspaceRoot = resolve(config.workspaceRoot ?? process.cwd())
+   const provider = config.provider ?? process.env.AGENT_SOCIETY_PROVIDER ?? 'deepseek-official'
+-  const model = config.model ?? process.env.DSH_MODEL ?? 'deepseek-v4-flash'
+-  const maxTokens = Math.min(config.maxTokens ?? 2048, 2048)
++  const model =
++    config.model ??
++    process.env.AGENT_SOCIETY_MODEL ??
++    process.env.AGENT_DSH_MODEL ??
++    process.env.DSH_MODEL ??
++    process.env.AGENT_REMOTE_MODEL ??
++    'deepseek-v4-flash'
++  const maxTokens = Math.min(
++    config.maxTokens ?? DEFAULT_SUMMARY_MAX_TOKENS,
++    SUMMARY_MAX_TOKENS_HARD_LIMIT,
++  )
+   const pollSeconds = config.pollSeconds ?? 15
+   const idleSeconds = config.idleSeconds ?? 60
+   const summarize =
+@@ -125,29 +152,12 @@ export function apply(ctx: Context, config: Config): void {
+   )
+ 
+   const hub = new HubClient(hubUrl, hubToken)
+-  const statePath = resolve(
+-    process.env.DSH_HOME?.trim() || resolve(homedir(), '.dsh'),
+-    'agent-society-digest-state.json',
+-  )
++  const dshHome = resolve(process.env.DSH_HOME?.trim() || resolve(homedir(), '.dsh'))
++  const statePath = resolve(dshHome, 'agent-society-digest-state.json')
+   const state: DigestState = loadState(statePath)
+   const inFlight = new Set<string>()
+   const attempts = new Map<string, number>()
+ 
+-  // Capture the latest assembly so live-session summaries can reuse the
+-  // exact system prompt (renderPrompt) and tool schemas the session's own
+-  // requests used — the summarization request then shares the session's
+-  // byte-identical prefix.
+-  let assembly: AssemblySnapshot | undefined
+-  ctx.on(
+-    'system-prompt/assemble',
+-    async (assembledInput, _context, next) => {
+-      const assembled = await next()
+-      assembly = assembled
+-      return assembled
+-    },
+-    { prepend: true },
+-  )
+-
+   const timer = ctx.setInterval(() => {
+     void tick()
+   }, pollSeconds * 1_000)
+@@ -213,6 +223,7 @@ export function apply(ctx: Context, config: Config): void {
+           if (inFlight.has(header.id)) continue
+           if (attempts.get(header.id) ?? 0 >= MAX_ATTEMPTS) continue
+           inFlight.add(header.id)
++          let lease: DigestLeaseResult | undefined
+           try {
+             if (events === undefined) {
+               const inspection = await persistence.inspect(header.id)
+@@ -226,6 +237,23 @@ export function apply(ctx: Context, config: Config): void {
+               saveState(statePath, state)
+               continue
+             }
++            const roundEventId = digestEventIdForRound(principalId, header.id, count)
++            if (summarize) {
++              lease = tryAcquireDigestLease(
++                digestLeasePath(dshHome, roundEventId),
++                roundEventId,
++              )
++              if (lease.status === 'busy') {
++                recordAgentSocietyMetrics(dshHome, {
++                  digestDeduplicatedCall: true,
++                })
++                ctx.logger.debug(
++                  `agent-society-session-digest skipped duplicate round ${count} for ${header.id} (another profile owns the lease)`,
++                )
++                continue
++              }
++              recordAgentSocietyMetrics(dshHome, { digestModelCall: true })
++            }
+             const summary = await summarizeFor(
+               { id: header.id, events },
+               count,
+@@ -247,7 +275,7 @@ export function apply(ctx: Context, config: Config): void {
+                 createdAt: now,
+               },
+               {
+-                eventId: digestEventIdForRound(principalId, header.id, count),
++                eventId: roundEventId,
+                 summary: summary.summary,
+               },
+             )
+@@ -264,6 +292,7 @@ export function apply(ctx: Context, config: Config): void {
+               `agent-society-session-digest failed for ${header.id}: ${error instanceof Error ? error.message : String(error)}`,
+             )
+           } finally {
++            releaseDigestLease(lease)
+             inFlight.delete(header.id)
+           }
+         }
+@@ -294,7 +323,25 @@ export function apply(ctx: Context, config: Config): void {
+     if (inFlight.has(sessionId)) return
+     if (attempts.get(sessionId) ?? 0 >= MAX_ATTEMPTS) return
+     inFlight.add(sessionId)
++    let lease: DigestLeaseResult | undefined
+     try {
++      const roundEventId = digestEventIdForRound(principalId, sessionId, count)
++      if (summarize) {
++        lease = tryAcquireDigestLease(
++          digestLeasePath(dshHome, roundEventId),
++          roundEventId,
++        )
++        if (lease.status === 'busy') {
++          recordAgentSocietyMetrics(dshHome, {
++            digestDeduplicatedCall: true,
++          })
++          ctx.logger.debug(
++            `agent-society-session-digest skipped duplicate round ${count} for ${sessionId} (another profile owns the lease)`,
++          )
++          return
++        }
++        recordAgentSocietyMetrics(dshHome, { digestModelCall: true })
++      }
+       const summary = await summarizeFor(
+         { id: sessionId, events },
+         count,
+@@ -316,7 +363,7 @@ export function apply(ctx: Context, config: Config): void {
+           createdAt: now,
+         },
+         {
+-          eventId: digestEventIdForRound(principalId, sessionId, count),
++          eventId: roundEventId,
+           summary: summary.summary,
+         },
+       )
+@@ -333,6 +380,7 @@ export function apply(ctx: Context, config: Config): void {
+         `agent-society-session-digest failed for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+       )
+     } finally {
++      releaseDigestLease(lease)
+       inFlight.delete(sessionId)
+     }
+   }
+@@ -349,16 +397,15 @@ export function apply(ctx: Context, config: Config): void {
+     }
+     try {
+       const live = ctx.get('sessions') as
+-        | { get(id: string): SessionLike & { deriveMessages(): unknown[] } | undefined }
++        | { get(id: string): LiveSessionLike | undefined }
+         | undefined
+       const liveSession = options.live ? live?.get(session.id) : undefined
+-      if (liveSession !== undefined && assembly !== undefined) {
++      const requestHeader = liveSession?.requestHeader()
++      if (liveSession !== undefined && requestHeader !== undefined) {
+         const text = await summarizeLiveSession({
+           ctx,
+           session: liveSession as never,
+-          assembly,
+-          provider,
+-          model,
++          requestHeader,
+           maxTokens,
+         })
+         return { ...fields, summary: text }
+@@ -468,6 +515,99 @@ export function digestEventIdForRound(
+     .digest('hex')
+ }
+ 
++export type DigestLeaseStatus = 'acquired' | 'busy' | 'unavailable'
++
++export interface DigestLeaseResult {
++  readonly status: DigestLeaseStatus
++  readonly release?: () => void
++}
++
++/**
++ * Use one lease file per round. A single shared file would incorrectly make
++ * an unrelated session wait behind another session's summarization call.
++ */
++export function digestLeasePath(dshHome: string, eventId: string): string {
++  const key = createHash('sha256').update(eventId).digest('hex')
++  return resolve(dshHome, 'agent-society-digest-leases', `${key}.lease`)
++}
++
++function releaseDigestLease(lease: DigestLeaseResult | undefined): void {
++  lease?.release?.()
++}
++
++/**
++ * Acquire one best-effort cross-profile lease for a digest model call. A
++ * filesystem failure returns `unavailable`, which deliberately lets the
++ * caller continue with the existing event-id idempotency fallback.
++ */
++export function tryAcquireDigestLease(
++  path: string,
++  eventId: string,
++  now = Date.now(),
++): DigestLeaseResult {
++  try {
++    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
++  } catch {
++    return { status: 'unavailable' }
++  }
++
++  const owner = randomUUID()
++  for (let attempt = 0; attempt < 2; attempt += 1) {
++    let descriptor: number | undefined
++    try {
++      descriptor = openSync(path, 'wx', 0o600)
++      writeSync(
++        descriptor,
++        JSON.stringify({ owner, eventId, createdAt: now }) + '\n',
++      )
++      closeSync(descriptor)
++      descriptor = undefined
++      let released = false
++      return {
++        status: 'acquired',
++        release: () => {
++          if (released) return
++          released = true
++          try {
++            const current = JSON.parse(readFileSync(path, 'utf8')) as {
++              owner?: unknown
++            }
++            if (current.owner === owner) unlinkSync(path)
++          } catch {
++            // The lease may already have expired or been removed.
++          }
++        },
++      }
++    } catch (error) {
++      if (descriptor !== undefined) {
++        try {
++          closeSync(descriptor)
++        } catch {
++          // Preserve the original acquisition failure.
++        }
++      }
++      const code = (error as { code?: string }).code
++      if (code !== 'EEXIST') return { status: 'unavailable' }
++      try {
++        const current = JSON.parse(readFileSync(path, 'utf8')) as {
++          createdAt?: unknown
++        }
++        if (
++          typeof current.createdAt === 'number' &&
++          now - current.createdAt < DIGEST_LEASE_SECONDS * 1_000
++        ) {
++          return { status: 'busy' }
++        }
++        unlinkSync(path)
++      } catch (readError) {
++        if ((readError as { code?: string }).code === 'ENOENT') continue
++        return { status: 'unavailable' }
++      }
++    }
++  }
++  return { status: 'unavailable' }
++}
++
+ function loadState(path: string): DigestState {
+   try {
+     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
+
+diff --git a/dsh-plugin/src/summarizer.ts b/dsh-plugin/src/summarizer.ts
+index a4ecc72..4ffeee2 100644
+--- a/dsh-plugin/src/summarizer.ts
++++ b/dsh-plugin/src/summarizer.ts
+@@ -2,32 +2,40 @@
+  * LLM summarization for interactive-session consensus digests.
+  *
+  * KV-cache rules (non-negotiable):
+- * - The live-session mode reuses the session's OWN derived messages
+- *   (`session.deriveMessages()`, byte-identical to what dsh just sent the
+- *   model) plus the cached assembly system/tools, and appends ONLY the
+- *   summarization instruction as a trailing user message. The prefix
+- *   (system + tools + full history) is unchanged, so provider prefix
+- *   caches hit on the hot session prefix.
+- * - The standalone mode never copies session context: a fixed template
+- *   prefix plus extracted fields. It is the fallback when no live session
+- *   (or no assembly cache) is available.
+- * - Both modes are bounded: maxTokens 2048, output clipped to
++ * - The live-session mode reuses the target session's OWN derived messages
++ *   and its last persisted request/header system prompt, tools, route, and
++ *   adapter config. It appends ONLY the summarization instruction as a
++ *   trailing user message, so the session's prefix is not borrowed from a
++ *   different session or process-global assembly.
++ * - The standalone mode never copies session context: a fixed system prompt
++ *   plus one structured user payload. It is the fallback when no live session
++ *   header is available.
++ * - Both modes are bounded: default maxTokens 768, hard cap 1024, output clipped to
+  *   {@link MAX_SUMMARY_CHARS}; failures fall back to the deterministic
+  *   extractor so a consensus digest is still produced.
+  */
+ 
+ import type { Context } from '@deepseek-ai/cordis'
+ import { createUserMessage, type Message } from '@deepseek-ai/dsh-llm'
+-import type { GenerateOptions, StreamChunk, ToolSchema } from '@deepseek-ai/dsh-llm'
+-import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
+-import type { Session } from '@deepseek-ai/dsh-session'
++import type {
++  GenerateOptions,
++  LlmCallConfig,
++  StreamChunk,
++} from '@deepseek-ai/dsh-llm'
++import type { EpochHeader, Session } from '@deepseek-ai/dsh-session'
+ 
+ export const MAX_SUMMARY_CHARS = 600
++export const DEFAULT_SUMMARY_MAX_TOKENS = 768
++export const SUMMARY_MAX_TOKENS_HARD_LIMIT = 1_024
+ export const SUMMARY_TIMEOUT_MS = 30_000
+ export const SUMMARIZE_PROMPT = (
+   'Summarize this session in Chinese, at most 300 tokens: its goal, key ' +
+   'actions, and the conclusion reached. Output only the summary text.'
+ ).replace(/\s+/gu, ' ')
++export const SUMMARIZE_SYSTEM = (
++  'You are the AgentSociety consensus summarizer. Return only a concise, '
++  + 'reusable Chinese summary of the supplied structured session notes.'
++).replace(/\s+/gu, ' ')
+ 
+ export interface SummaryFields {
+   readonly title: string | undefined
+@@ -49,35 +57,31 @@ export function deterministicSummary(fields: SummaryFields): string {
+   return text.slice(0, MAX_SUMMARY_CHARS)
+ }
+ 
+-/** The last assembled prompt, captured by the watcher; the system text
+- *  is derived with the same renderPrompt the agent loop uses, so the
+- *  summarization request shares the session's exact system slot. */
+-export type AssemblySnapshot = import('@deepseek-ai/dsh-system-prompt').PromptAssembly
+-
+ interface LlmLike {
+   prepareCall(
+-    config: { provider: string; model: string; maxTokens?: number; reasoningEffort?: unknown },
++    config: LlmCallConfig,
+     signal?: AbortSignal,
+   ): Promise<{
+-    readonly config: Record<string, unknown>
++    readonly config: LlmCallConfig
+     stream(options: GenerateOptions): AsyncIterable<StreamChunk>
+   }>
+ }
+ 
+-/**
+- * Live-session mode: session-derived prefix + trailing instruction.
+- * The prefix is byte-identical to the session's own requests, so provider
+- * prefix caches are reused; only the instruction + output are new tokens.
+- */
++function boundedMaxTokens(value: number): number {
++  return Math.min(
++    Math.max(1, Math.floor(Number.isFinite(value) ? value : DEFAULT_SUMMARY_MAX_TOKENS)),
++    SUMMARY_MAX_TOKENS_HARD_LIMIT,
++  )
++}
++
++/** Live-session mode: target session header/history prefix + trailing instruction. */
+ export async function summarizeLiveSession(options: {
+   ctx: Context
+   session: Session
+-  assembly: AssemblySnapshot
+-  provider: string
+-  model: string
++  requestHeader: EpochHeader
+   maxTokens: number
+ }): Promise<string> {
+-  const { ctx, session, assembly, provider, model, maxTokens } = options
++  const { ctx, session, requestHeader, maxTokens } = options
+   const llm = ctx.get('llm') as LlmLike | undefined
+   if (llm === undefined || typeof llm.prepareCall !== 'function') {
+     throw new Error('llm service unavailable')
+@@ -87,29 +91,28 @@ export async function summarizeLiveSession(options: {
+     content: [{ type: 'text', text: SUMMARIZE_PROMPT }],
+     source: { kind: 'user' },
+   })
+-  const prepared = await llm.prepareCall(
+-    { provider, model, maxTokens },
+-    undefined,
+-  )
++  // Keep the target session's route and adapter-resolved controls. Only the
++  // auxiliary output ceiling is intentionally smaller than the conversation
++  // request; system/tools/history remain the exact session-owned prefix.
++  const prepared = await llm.prepareCall({
++    ...requestHeader.config,
++    maxTokens: boundedMaxTokens(maxTokens),
++  }, undefined)
+   // The request's call-config fields must match the materialized prepared
+   // config exactly (adapter defaults included), or the dispatch rejects
+   // with "prepared LLM call config changed before adapter dispatch".
+   const stream = prepared.stream({
+     ...prepared.config,
+-    provider,
+-    model,
+     messages: [...history, instruction],
+-    system: renderPrompt(assembly),
+-    tools: assembly.tools as ToolSchema[],
++    ...(requestHeader.system ? { system: requestHeader.system } : {}),
++    ...(requestHeader.tools && requestHeader.tools.length > 0
++      ? { tools: requestHeader.tools }
++      : {}),
+   } as unknown as GenerateOptions)
+   return collectText(stream)
+ }
+ 
+-/**
+- * Standalone mode: fixed template + extracted fields, no session context.
+- * Used when the session is not live in this process (or the assembly
+- * snapshot is missing). The fixed instruction prefix is itself cacheable.
+- */
++/** Standalone mode: fixed system prefix plus a structured dynamic user payload. */
+ export async function summarizeStandalone(options: {
+   ctx: Context
+   fields: SummaryFields
+@@ -122,23 +125,29 @@ export async function summarizeStandalone(options: {
+   if (llm === undefined || typeof llm.prepareCall !== 'function') {
+     throw new Error('llm service unavailable')
+   }
+-  const prompt = (
+-    'Summarize the following session notes in Chinese, at most 300 tokens: ' +
+-    'goal, key actions, conclusion. Output only the summary text.\n\n' +
+-    `Title: ${fields.title ?? '-'}\n` +
+-    `Objective: ${fields.objective.slice(0, 500) || '-'}\n` +
+-    `Result: ${fields.resultText.slice(0, 1_500) || '-'}\n` +
+-    `Messages: ${fields.messageCount}; Tools: ${fields.toolCount}`
+-  ).replace(/\s+/gu, ' ')
++  const prompt = JSON.stringify({
++    title: fields.title?.slice(0, 200) ?? null,
++    objective: fields.objective.slice(0, 500),
++    result: fields.resultText.slice(0, 1_500),
++    messageCount: fields.messageCount,
++    toolCount: fields.toolCount,
++  })
+   const prepared = await llm.prepareCall(
+-    { provider, model, maxTokens, reasoningEffort: 'off' as never },
++    {
++      provider,
++      model,
++      maxTokens: boundedMaxTokens(maxTokens),
++      reasoningEffort: 'off' as never,
++    },
+     undefined,
+   )
+   const stream = prepared.stream({
+     ...prepared.config,
+-    provider,
+-    model,
+-    messages: [createUserMessage({ content: [{ type: 'text', text: prompt }], source: { kind: 'user' } })],
++    messages: [createUserMessage({
++      content: [{ type: 'text', text: prompt }],
++      source: { kind: 'user' },
++    })],
++    system: SUMMARIZE_SYSTEM,
+   } as unknown as GenerateOptions)
+   return collectText(stream)
+ }
+
+diff --git a/dsh-plugin/src/tool-guard.ts b/dsh-plugin/src/tool-guard.ts
+index 9a7661a..c4be865 100644
+--- a/dsh-plugin/src/tool-guard.ts
++++ b/dsh-plugin/src/tool-guard.ts
+@@ -66,7 +66,7 @@ export function createToolGuard(ctx: Context, definition: ToolGuardDefinition):
+           ? []
+           : await definition.collect(tools, scope)
+         const after = definition.after ?? defaultAppend
+-        const result = after(current, found)
++        const result = after(current, stableToolSchemas(found))
+         if (result === undefined) return assembled
+         return result
+       } catch (error) {
+@@ -80,16 +80,43 @@ export function createToolGuard(ctx: Context, definition: ToolGuardDefinition):
+   )
+ }
+ 
+-function defaultAppend(
++export function defaultAppend(
+   assembly: Assembly,
+   found: readonly ToolSchema[],
+ ): Assembly | undefined {
+   if (found.length === 0) return undefined
+   const existing = new Set(assembly.tools.map((tool) => tool.name))
+-  const missing = found.filter((tool) => !existing.has(tool.name))
++  const missing = [...found]
++    .filter((tool) => !existing.has(tool.name))
++    .sort((a, b) => stringCompare(a.name, b.name))
+   if (missing.length === 0) return undefined
+   return {
+     ...assembly,
+     tools: [...assembly.tools, ...missing],
+   }
+ }
++
++/** Recursively canonicalize JSON-schema object keys before they enter a
++ * request header. Arrays retain their declared order because `required` and
++ * enum arrays can be semantically ordered by an adapter. */
++export function stableToolSchemas(
++  tools: readonly ToolSchema[],
++): ToolSchema[] {
++  return tools.map((tool) => stableValue(tool) as ToolSchema)
++}
++
++function stableValue(value: unknown): unknown {
++  if (Array.isArray(value)) return value.map(stableValue)
++  if (value !== null && typeof value === 'object') {
++    return Object.fromEntries(
++      Object.entries(value as Record<string, unknown>)
++        .sort(([a], [b]) => stringCompare(a, b))
++        .map(([key, child]) => [key, stableValue(child)]),
++    )
++  }
++  return value
++}
++
++function stringCompare(a: string, b: string): number {
++  return a < b ? -1 : a > b ? 1 : 0
++}
+
+diff --git a/dsh-plugin/test/shared-context.test.mjs b/dsh-plugin/test/shared-context.test.mjs
+index afd1a12..c821f6a 100644
+--- a/dsh-plugin/test/shared-context.test.mjs
++++ b/dsh-plugin/test/shared-context.test.mjs
+@@ -7,6 +7,8 @@ import { HubClient } from '../lib/hub-client.js'
+ import {
+   consensusPromptLines,
+   buildSharedContextSections,
++  normalizeSharedContextState,
++  renderSharedContextUpdate,
+ } from '../lib/directory.js'
+ 
+ const INPUT = {
+@@ -181,6 +183,65 @@ test('consensusPromptLines excludes the current session digests', () => {
+   assert.equal(all.length, 4)
+ })
+ 
++test('balanced state is stable across mirror insertion order and idle timestamps', () => {
++  const mirror = {
++    seq: 10,
++    updated_at: 100,
++    rows: {
++      b: { session_id: 'b', actor_id: 'b-a', title: 'B', workspace: '/b', status: 'idle', last_active_at: 99, session_mode: 'per_task', tool_policy: 'full', invocations: [{ objective: 'ignored', status: 'done', at: 99 }] },
++      a: { session_id: 'a', actor_id: 'a-a', title: 'A', workspace: '/a', status: 'working', last_active_at: 1, session_mode: 'continuous', tool_policy: 'read_only', invocations: [] },
++    },
++    consensus: {
++      seq: 8,
++      entries: [
++        { seq: 7, kind: 'digest', session_id: 'b', summary: 'old' },
++        { seq: 8, kind: 'digest', session_id: 'b', summary: 'new' },
++        { seq: 6, kind: 'decision', session_id: 'a', summary: 'A decision' },
++      ],
++    },
++  }
++  const first = normalizeSharedContextState(mirror, 'mine')
++  const second = normalizeSharedContextState({
++    ...mirror,
++    seq: 11,
++    updated_at: 999,
++    rows: {
++      a: { ...mirror.rows.a, last_active_at: 9999 },
++      b: { ...mirror.rows.b, last_active_at: 8888, invocations: [{ objective: 'changed but ignored', status: 'done', at: 8888 }] },
++    },
++    consensus: { ...mirror.consensus, seq: 9, entries: [...mirror.consensus.entries].reverse() },
++  }, 'mine')
++  assert.deepEqual(first.directoryRows.map(row => row.session_id), ['a', 'b'])
++  assert.equal(first.consensusEntries.length, 2)
++  assert.equal(first.consensusEntries[0].summary, 'new')
++  assert.equal(renderSharedContextUpdate(first, second), undefined)
++})
++
++test('balanced updates use a bounded initial snapshot and append-only delta', () => {
++  const empty = normalizeSharedContextState({ seq: 1, updated_at: 1, rows: {}, consensus: { seq: 1, entries: [] } }, 'mine')
++  const initialState = normalizeSharedContextState({
++    seq: 2,
++    updated_at: 2,
++    rows: { other: { session_id: 'other', title: 'Other', workspace: '/other', status: 'idle', last_active_at: 1, session_mode: 'per_task', tool_policy: 'full', invocations: [] } },
++    consensus: { seq: 2, entries: [{ seq: 2, kind: 'digest', session_id: 'other', summary: 'first' }] },
++  }, 'mine')
++  const initial = renderSharedContextUpdate(undefined, initialState)
++  assert.equal(initial.kind, 'initial')
++  assert.ok(initial.text.length <= 1600)
++  const changedState = normalizeSharedContextState({
++    ...initialState,
++    seq: 3,
++    rows: { other: { ...initialState.directoryRows[0], status: 'working', last_active_at: 3, invocations: [] } },
++    consensus: { seq: 3, entries: [{ seq: 3, kind: 'digest', session_id: 'other', summary: 'second' }] },
++  }, 'mine')
++  const delta = renderSharedContextUpdate(initialState, changedState)
++  assert.equal(delta.kind, 'delta')
++  assert.ok(delta.text.length <= 800)
++  assert.ok(delta.text.includes('second'))
++  assert.ok(!delta.text.includes('first'))
++  assert.equal(renderSharedContextUpdate(empty, empty), undefined)
++})
++
+ test('buildSharedContextSections excludes the current session row', () => {
+   const mirror = {
+     seq: 1,
+@@ -198,6 +259,64 @@ test('buildSharedContextSections excludes the current session row', () => {
+   assert.ok(!dir.text.includes('mine |'))
+ })
+ 
++test('balanced prompt guard appends initial and delta messages without a series reset', async () => {
++  const { apply } = await import('../lib/prompt-guard.js')
++  const { saveMirror } = await import('../lib/directory.js')
++  const { mkdtempSync, rmSync, mkdirSync } = await import('node:fs')
++  const { tmpdir } = await import('node:os')
++  const dir = mkdtempSync(join(tmpdir(), 'dsh-balanced-'))
++  const mirrorFile = join(dir, 'agent-society-directory.json')
++  const previousHome = process.env.DSH_HOME
++  const previousMode = process.env.AGENT_SOCIETY_CONTEXT_MODE
++  const previousDirectory = process.env.AGENT_SOCIETY_DIRECTORY
++  let handler
++  const sections = []
++  const ctx = {
++    on: (event, fn) => { if (event === 'agent/pre-step') handler = fn },
++    get: (name) => name === 'systemPrompt'
++      ? { section: (input) => sections.push(input) }
++      : undefined,
++    logger: { warn: () => {} },
++  }
++  try {
++    mkdirSync(dir, { recursive: true })
++    process.env.DSH_HOME = dir
++    process.env.AGENT_SOCIETY_CONTEXT_MODE = 'balanced'
++    process.env.AGENT_SOCIETY_DIRECTORY = '1'
++    saveMirror(mirrorFile, {
++      seq: 1, updated_at: 1, rows: {},
++      consensus: { seq: 1, entries: [{ seq: 1, kind: 'digest', session_id: 'other', summary: 'first' }] },
++    })
++    apply(ctx)
++    assert.ok(sections.some(section => section.name === 'agent-society:workflow'))
++    const base = { kind: 'enter', messages: [] }
++    const payload = { agent: { session: { id: 'mine' } }, turn: 1, step: 1, signal: new AbortController().signal }
++    const initial = await handler(payload, async () => ({ ...base, messages: [] }))
++    assert.equal(initial.messages.length, 1)
++    assert.ok(initial.messages[0].content[0].text.includes('初始快照'))
++    assert.equal(initial.startsRequestSeries, undefined)
++    const unchanged = await handler(payload, async () => ({ ...base, messages: [] }))
++    assert.equal(unchanged.messages.length, 0)
++    saveMirror(mirrorFile, {
++      seq: 2, updated_at: 2, rows: {},
++      consensus: { seq: 2, entries: [{ seq: 2, kind: 'digest', session_id: 'other', summary: 'second' }] },
++    })
++    const delta = await handler(payload, async () => ({ ...base, messages: [] }))
++    assert.equal(delta.messages.length, 1)
++    assert.ok(delta.messages[0].content[0].text.includes('增量'))
++    assert.ok(delta.messages[0].content[0].text.includes('second'))
++    assert.equal(delta.startsRequestSeries, undefined)
++  } finally {
++    if (previousHome === undefined) delete process.env.DSH_HOME
++    else process.env.DSH_HOME = previousHome
++    if (previousMode === undefined) delete process.env.AGENT_SOCIETY_CONTEXT_MODE
++    else process.env.AGENT_SOCIETY_CONTEXT_MODE = previousMode
++    if (previousDirectory === undefined) delete process.env.AGENT_SOCIETY_DIRECTORY
++    else process.env.AGENT_SOCIETY_DIRECTORY = previousDirectory
++    rmSync(dir, { recursive: true, force: true })
++  }
++})
++
+ test('prompt-guard injects once and skips unchanged snapshots', async () => {
+   const { apply } = await import('../lib/prompt-guard.js')
+   const { saveMirror } = await import('../lib/directory.js')
+@@ -206,6 +325,8 @@ test('prompt-guard injects once and skips unchanged snapshots', async () => {
+   const dir = mkdtempSync(join(tmpdir(), 'dsh-pg2-'))
+   const mirrorFile = join(dir, 'agent-society-directory.json')
+   const orig = process.env.DSH_HOME
++  const origMode = process.env.AGENT_SOCIETY_CONTEXT_MODE
++  const origDirectory = process.env.AGENT_SOCIETY_DIRECTORY
+   const sections = []
+   let handler
+   const ctx = {
+@@ -218,6 +339,8 @@ test('prompt-guard injects once and skips unchanged snapshots', async () => {
+   try {
+     mkdirSync(dir, { recursive: true })
+     process.env.DSH_HOME = dir
++    process.env.AGENT_SOCIETY_CONTEXT_MODE = 'legacy'
++    process.env.AGENT_SOCIETY_DIRECTORY = '1'
+     saveMirror(mirrorFile, {
+       seq: 1, updated_at: 1, rows: {},
+       consensus: { seq: 1, entries: [
+@@ -248,6 +371,10 @@ test('prompt-guard injects once and skips unchanged snapshots', async () => {
+   } finally {
+     if (orig === undefined) delete process.env.DSH_HOME
+     else process.env.DSH_HOME = orig
++    if (origMode === undefined) delete process.env.AGENT_SOCIETY_CONTEXT_MODE
++    else process.env.AGENT_SOCIETY_CONTEXT_MODE = origMode
++    if (origDirectory === undefined) delete process.env.AGENT_SOCIETY_DIRECTORY
++    else process.env.AGENT_SOCIETY_DIRECTORY = origDirectory
+     rmSync(dir, { recursive: true, force: true })
+   }
+ })
+@@ -260,9 +387,13 @@ test('prompt-guard appends shared context as a runtime context, not a section',
+   const dir = mkdtempSync(join(tmpdir(), 'dsh-pg-'))
+   const mirrorFile = join(dir, 'agent-society-directory.json')
+   const origMirrorPath = process.env.DSH_HOME
++  const origMode = process.env.AGENT_SOCIETY_CONTEXT_MODE
++  const origDirectory = process.env.AGENT_SOCIETY_DIRECTORY
+   try {
+     mkdirSync(dir, { recursive: true })
+     process.env.DSH_HOME = dir
++    process.env.AGENT_SOCIETY_CONTEXT_MODE = 'legacy'
++    process.env.AGENT_SOCIETY_DIRECTORY = '1'
+     saveMirror(mirrorFile, {
+       seq: 1, updated_at: 1, rows: {},
+       consensus: { seq: 1, entries: [
+@@ -289,6 +420,10 @@ test('prompt-guard appends shared context as a runtime context, not a section',
+   } finally {
+     if (origMirrorPath === undefined) delete process.env.DSH_HOME
+     else process.env.DSH_HOME = origMirrorPath
++    if (origMode === undefined) delete process.env.AGENT_SOCIETY_CONTEXT_MODE
++    else process.env.AGENT_SOCIETY_CONTEXT_MODE = origMode
++    if (origDirectory === undefined) delete process.env.AGENT_SOCIETY_DIRECTORY
++    else process.env.AGENT_SOCIETY_DIRECTORY = origDirectory
+     rmSync(dir, { recursive: true, force: true })
+   }
+ })
+
+diff --git a/dsh-plugin/test/session-digest.test.mjs b/dsh-plugin/test/session-digest.test.mjs
+index 3e599e0..ea893f0 100644
+--- a/dsh-plugin/test/session-digest.test.mjs
++++ b/dsh-plugin/test/session-digest.test.mjs
+@@ -1,10 +1,12 @@
+ import { test } from 'node:test'
+ import assert from 'node:assert/strict'
+ 
+-import { deterministicSummary } from '../lib/summarizer.js'
++import { deterministicSummary, summarizeLiveSession, summarizeStandalone, SUMMARIZE_SYSTEM } from '../lib/summarizer.js'
+ import {
+   digestEventIdForRound,
++  digestLeasePath,
+   extractFields,
++  tryAcquireDigestLease,
+ } from '../lib/session-digest-watcher.js'
+ import { buildSessionDigest } from '../lib/digest.js'
+ 
+@@ -42,6 +44,14 @@ test('round event id is idempotent per round and differs across rounds', () => {
+   assert.equal(a.length, 64)
+ })
+ 
++test('digest leases are independent for different rounds', () => {
++  const first = digestLeasePath('/tmp/dsh-home', 'round-a')
++  const second = digestLeasePath('/tmp/dsh-home', 'round-b')
++  assert.notEqual(first, second)
++  assert.match(first, /agent-society-digest-leases/u)
++  assert.match(first, /\.lease$/u)
++})
++
+ test('buildSessionDigest accepts eventId and summary overrides', () => {
+   const digest = buildSessionDigest(
+     {
+@@ -91,3 +101,98 @@ test('messageCountOf counts only user and assistant messages', async () => {
+   ]
+   assert.equal(messageCountOf(events), 3)
+ })
++
++test('digest lease deduplicates concurrent rounds and recovers after expiry', async () => {
++  const { mkdtempSync, readFileSync, rmSync, writeFileSync } = await import('node:fs')
++  const { join } = await import('node:path')
++  const { tmpdir } = await import('node:os')
++  const dir = mkdtempSync(join(tmpdir(), 'dsh-digest-lease-'))
++  const path = join(dir, 'digest.lease')
++  try {
++    const first = tryAcquireDigestLease(path, 'round-a', 1000)
++    assert.equal(first.status, 'acquired')
++    assert.equal(tryAcquireDigestLease(path, 'round-a', 1001).status, 'busy')
++    first.release()
++    const second = tryAcquireDigestLease(path, 'round-a', 1002)
++    assert.equal(second.status, 'acquired')
++    second.release()
++    writeFileSync(path, JSON.stringify({ owner: 'old', eventId: 'old', createdAt: 1000 }))
++    const recovered = tryAcquireDigestLease(path, 'round-b', 1000 + 90 * 1000)
++    assert.equal(recovered.status, 'acquired')
++    assert.notEqual(JSON.parse(readFileSync(path, 'utf8')).owner, 'old')
++    recovered.release()
++  } finally {
++    rmSync(dir, { recursive: true, force: true })
++  }
++})
++
++test('live summarizer uses the target session request header and route', async () => {
++  let preparedConfig
++  let request
++  const ctx = {
++    get(name) {
++      assert.equal(name, 'llm')
++      return {
++        async prepareCall(config) {
++          preparedConfig = config
++          return {
++            config,
++            async *stream(options) {
++              request = options
++              yield { type: 'text-delta', index: 0, text: '目标摘要' }
++            },
++          }
++        },
++      }
++    },
++  }
++  const header = {
++    config: { provider: 'target-provider', model: 'target-model', temperature: 0.2 },
++    system: 'target system',
++    tools: [{ name: 'target_tool', description: 'target', parameters: { type: 'object' } }],
++  }
++  const text = await summarizeLiveSession({
++    ctx,
++    session: { deriveMessages: () => [{ role: 'user', content: [], source: { kind: 'user' }, id: 'history' }] },
++    requestHeader: header,
++    maxTokens: 768,
++  })
++  assert.equal(text, '目标摘要')
++  assert.equal(preparedConfig.provider, 'target-provider')
++  assert.equal(preparedConfig.model, 'target-model')
++  assert.equal(preparedConfig.temperature, 0.2)
++  assert.equal(request.system, 'target system')
++  assert.deepEqual(request.tools, header.tools)
++  assert.equal(request.messages.length, 2)
++})
++
++test('standalone summarizer keeps a fixed system prompt and structured payload', async () => {
++  let request
++  const ctx = {
++    get() {
++      return {
++        async prepareCall(config) {
++          return {
++            config,
++            async *stream(options) {
++              request = options
++              yield { type: 'text-delta', index: 0, text: '独立摘要' }
++            },
++          }
++        },
++      }
++    },
++  }
++  const text = await summarizeStandalone({
++    ctx,
++    fields: { title: 'T', objective: 'O', resultText: 'R', messageCount: 2, toolCount: 1 },
++    provider: 'p',
++    model: 'm',
++    maxTokens: 4096,
++  })
++  assert.equal(text, '独立摘要')
++  assert.equal(request.system, SUMMARIZE_SYSTEM)
++  assert.deepEqual(JSON.parse(request.messages[0].content[0].text), {
++    title: 'T', objective: 'O', result: 'R', messageCount: 2, toolCount: 1,
++  })
++})
+
+diff --git a/src/agent_hub/mcp.py b/src/agent_hub/mcp.py
+index d11840b..b9743be 100644
+--- a/src/agent_hub/mcp.py
++++ b/src/agent_hub/mcp.py
+@@ -16,6 +16,9 @@ SUPPORTED_PROTOCOL_VERSIONS = frozenset(
+ )
+ MCP_PRINCIPAL_ID = "mcp-external"
+ MCP_ACTOR_ID = "mcp-gateway"
++MCP_CONTEXT_MAX_LIMIT = 50
++MCP_DIRECTORY_MAX_LIMIT = 100
++MCP_DIRECTORY_SEARCH_MAX_LIMIT = 50
+ 
+ TOOL_DEFINITIONS: list[dict[str, Any]] = [
+     {
+@@ -137,15 +140,20 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
+             "asking anyone. The runtime-context injection only shows "
+             "one-line summaries; this tool returns the full entries "
+             "(objective/result text), so use it before deciding to ask "
+-            "a session anything."
++            "a session anything. Results are capped at 50 entries and "
++            "include truncated/latest_seq metadata."
+         ),
+         "inputSchema": {
+             "type": "object",
+             "properties": {
+-                "after_seq": {"type": "integer"},
++                "after_seq": {"type": "integer", "minimum": 0},
+                 "kind": {"type": "string"},
+                 "session_id": {"type": "string"},
+-                "limit": {"type": "integer"},
++                "limit": {
++                    "type": "integer",
++                    "minimum": 1,
++                    "maximum": MCP_CONTEXT_MAX_LIMIT,
++                },
+             },
+             "additionalProperties": False,
+         },
+@@ -156,7 +164,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
+             "List the session/agent directory of your principal: one row per "
+             "session (id, actor, node, title, workspace, status, last active). "
+             "USE THIS to discover which sessions/agents exist and what they "
+-            "are doing, e.g. to find who can help or who owns a workspace."
++            "are doing, e.g. to find who can help or who owns a workspace. "
++            "Results are capped at 100 rows and report truncation."
+         ),
+         "inputSchema": {
+             "type": "object",
+@@ -164,7 +173,12 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
+                 "query": {"type": "string"},
+                 "status": {"type": "string"},
+                 "actor_id": {"type": "string"},
+-                "limit": {"type": "integer"},
++                "after_seq": {"type": "integer", "minimum": 0},
++                "limit": {
++                    "type": "integer",
++                    "minimum": 1,
++                    "maximum": MCP_DIRECTORY_MAX_LIMIT,
++                },
+             },
+             "additionalProperties": False,
+         },
+@@ -195,13 +209,18 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
+         "description": (
+             "Search the session/agent directory by title, workspace, or "
+             "objective text. USE THIS when you need to find the session or "
+-            "agent that worked on a topic or lives in a workspace."
++            "agent that worked on a topic or lives in a workspace. Results "
++            "are capped at 50 rows and report truncation."
+         ),
+         "inputSchema": {
+             "type": "object",
+             "properties": {
+                 "query": {"type": "string"},
+-                "limit": {"type": "integer"},
++                "limit": {
++                    "type": "integer",
++                    "minimum": 1,
++                    "maximum": MCP_DIRECTORY_SEARCH_MAX_LIMIT,
++                },
+             },
+             "required": ["query"],
+             "additionalProperties": False,
+@@ -241,6 +260,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
+     },
+ ]
+ 
++# Keep tools/list stable across reconnects and Python mapping changes. The
++# dsh-side guard applies the same ordering to the request catalog.
++TOOL_DEFINITIONS.sort(key=lambda tool: str(tool.get("name", "")))
++
+ 
+ class McpService:
+     """Minimal MCP JSON-RPC 2.0 server mapping Hub tools to the existing API."""
+@@ -388,6 +411,12 @@ class McpService:
+                     for key, value in arguments.items()
+                     if value is not None
+                 }
++                limit = _bounded_limit(
++                    query_args.get("limit"),
++                    default=20,
++                    maximum=MCP_CONTEXT_MAX_LIMIT,
++                )
++                query_args["limit"] = limit
+                 # Default to the newest entries (descending) unless an
+                 # incremental pull is requested; latest_seq tells the caller
+                 # how far the head of the log is.
+@@ -402,16 +431,34 @@ class McpService:
+                     {
+                         "events": result["events"],
+                         "latest_seq": result.get("latest_seq"),
++                        "truncated": len(result["events"]) >= limit,
++                        "limit": limit,
+                     }
+                 )
+             if name == "hub_directory_list":
+-                query = "&".join(
+-                    f"{key}={quote(str(value))}"
++                query_args = {
++                    key: value
+                     for key, value in arguments.items()
+                     if value is not None
++                }
++                limit = _bounded_limit(
++                    query_args.get("limit"),
++                    default=50,
++                    maximum=MCP_DIRECTORY_MAX_LIMIT,
++                )
++                query_args["limit"] = limit
++                query = "&".join(
++                    f"{key}={quote(str(value))}"
++                    for key, value in query_args.items()
+                 )
+                 _, result = self.api.get("/v1/hub/directory", query, context)
+-                return self._tool_result({"rows": result["rows"]})
++                return self._tool_result(
++                    {
++                        "rows": result["rows"],
++                        "truncated": len(result["rows"]) >= limit,
++                        "limit": limit,
++                    }
++                )
+             if name == "hub_directory_get":
+                 session_id = self._required(arguments, "session_id")
+                 depth = arguments.get("depth", 1)
+@@ -424,14 +471,23 @@ class McpService:
+                 return self._tool_result({"row": result["row"]})
+             if name == "hub_directory_search":
+                 query_value = self._required(arguments, "query")
+-                limit = arguments.get("limit", 20)
+-                limit = limit if isinstance(limit, int) else 20
++                limit = _bounded_limit(
++                    arguments.get("limit"),
++                    default=20,
++                    maximum=MCP_DIRECTORY_SEARCH_MAX_LIMIT,
++                )
+                 _, result = self.api.get(
+                     "/v1/hub/directory",
+                     f"query={quote(query_value)}&limit={limit}",
+                     context,
+                 )
+-                return self._tool_result({"rows": result["rows"]})
++                return self._tool_result(
++                    {
++                        "rows": result["rows"],
++                        "truncated": len(result["rows"]) >= limit,
++                        "limit": limit,
++                    }
++                )
+             if name == "hub_ask":
+                 return self._tool_result({"answer": self._ask(arguments, context)})
+             return self._tool_error(-32601, f"Unknown tool: {name}")
+@@ -626,6 +682,12 @@ class McpService:
+         }
+ 
+ 
++def _bounded_limit(value: Any, *, default: int, maximum: int) -> int:
++    """Apply MCP-side result bounds before querying the Hub store."""
++    limit = value if isinstance(value, int) and not isinstance(value, bool) else default
++    return min(max(limit, 1), maximum)
++
++
+ def _safe_tenant_suffix(tenant_id: str) -> str:
+     return "".join(
+         character if character.isalnum() or character in "-_" else "_"
+
+diff --git a/docs/shared-context.md b/docs/shared-context.md
+index 5323573..6f6d37c 100644
+--- a/docs/shared-context.md
++++ b/docs/shared-context.md
+@@ -42,11 +42,30 @@ scope=`consensus` / `directory` / `qa`）：
+   调用记录（去重、最多 10 条）再推送。
+ - 陈旧淘汰：idle >30d 的目录行过期隐藏。
+ 
+-## 4. 有界上下文注入（P4）
+-
+-`agent-society-directory-index` 守卫在 `system-prompt/assemble` 之后追加两个
+-有界 section（合计 ≤4KB）：共识上下文一行摘要（≤8 条）+ 会话目录索引（≤20
+-行，working 优先）；失败保底返回原组装。只读本地镜像，零 Hub 延迟。
++## 4. 缓存友好的有界上下文注入（P4）
++
++agent-society-directory-index 默认使用 AGENT_SOCIETY_CONTEXT_MODE=balanced：
++
++- 第一次进入某个 session 时，通过公开 agent/pre-step waterfall 追加最多
++  1600 字符的紧凑初始快照；
++- 后续只追加最多 800 字符的结构化 delta；没有语义变化就不追加消息；
++- 共识按 seq 倒序且每个 session 默认只留最新一条，目录只按
++  session_id 排序；last_active_at、invocations 和对象插入顺序不会触发
++  更新；
++- 目录/共识被删除、过期或 delta 无法容纳时追加一次新的紧凑快照；
++- 每条更新包含 directory/consensus revision。完整 objective/result 与目录
++  详情仍通过 Hub MCP 按需读取；自动注入只使用摘要字段；
++- 更新作为普通 AgentSociety user message 进入 session，不设置
++  startsRequestSeries，不调用 dsh surface replace。已有旧 session 中的
++  snapshot 不做破坏性重写。
++
++兼容和回滚：
++
++- balanced：默认的初始快照 + delta；
++- legacy：恢复原有 system-prompt/assemble 的完整有界 runtime snapshot；
++- off：只保留静态 workflow 说明，不自动注入共享数据；
++- AGENT_SOCIETY_DIRECTORY=0 仍是硬关闭开关；
++- AGENT_SOCIETY_CONTEXT=0 仍只关闭 digest 写入，不改变历史语义。
+ 
+ ## 5. 按需问答与委派（P5 / P6a）
+ 
+@@ -74,12 +93,19 @@ scope=`consensus` / `directory` / `qa`）：
+ |---|---|---|
+ | `AGENT_SOCIETY_CONTEXT` | 未设 | `1` 时 worker 写入共识 digest |
+ | `AGENT_SOCIETY_DIRECTORY` | 未设(`0` 关闭) | 目录同步 + 注入守卫开关 |
++| `AGENT_SOCIETY_DIRECTORY` | 启用(`0` 关闭) | 目录同步 + 注入守卫开关 |
++| `AGENT_SOCIETY_CONTEXT_MODE` | `balanced` | `balanced` / `legacy` / `off` |
+ | `AGENT_SOCIETY_DIRECTORY_PULL_SECONDS` | 10 | 目录镜像拉取间隔 |
+ | `AGENT_SOCIETY_QUESTIONS` | 未设(`0` 关闭) | 问题回答（worker + bridge） |
+ | `AGENT_SOCIETY_QUESTION_POLICY` | auto | `auto` / `ask` / `standalone` |
+ | `AGENT_SOCIETY_QUESTION_POLL_SECONDS` | 10 | 交互进程问题轮询间隔 |
+ | `AGENT_SOCIETY_PRESENCE_WINDOW_MIN` | 5 | 人在场判定窗口（client 上报） |
+ 
++AgentSociety 在 $DSH_HOME/agent-society-context-metrics.json 保存不含内容的
++计数：初始/增量消息字节数、每 session 更新次数、digest 模型调用与被 lease
++去重次数、Hub tool schema hash。文件只用于诊断，写入失败不影响运行；agent
++doctor --json 可展示这些统计。
++
+ ## 已知边界
+ 
+ - Hub 仍为标准库单进程（几十个 worker 节点规模）；SSE 断线全功能降级轮询。
+
+diff --git a/tests/hub/test_agent_hub_mcp.py b/tests/hub/test_agent_hub_mcp.py
+index 3acddc9..5191e30 100644
+--- a/tests/hub/test_agent_hub_mcp.py
++++ b/tests/hub/test_agent_hub_mcp.py
+@@ -49,6 +49,7 @@ class McpServiceTests(unittest.TestCase):
+             self.assertIn("tools", initialized["result"]["capabilities"])
+             listed = mcp_call(service, "tools/list", {})
+             names = {tool["name"] for tool in listed["result"]["tools"]}
++            ordered_names = [tool["name"] for tool in listed["result"]["tools"]]
+             self.assertEqual(
+                 names,
+                 {
+@@ -67,6 +68,7 @@ class McpServiceTests(unittest.TestCase):
+                     "hub_ask",
+                 },
+             )
++            self.assertEqual(ordered_names, sorted(ordered_names))
+ 
+     def test_resources_list_is_supported(self) -> None:
+         with TemporaryDirectory() as temporary:
+
+diff --git a/tests/hub/test_directory.py b/tests/hub/test_directory.py
+index 0eb25db..2e1a7e2 100644
+--- a/tests/hub/test_directory.py
++++ b/tests/hub/test_directory.py
+@@ -387,17 +387,23 @@ class DirectoryApiTests(unittest.TestCase):
+         listed = _mcp_call(
+             service,
+             "tools/call",
+-            {"name": "hub_directory_list", "arguments": {}},
++            {"name": "hub_directory_list", "arguments": {"limit": 1000}},
+         )
+-        rows = json.loads(listed["result"]["content"][0]["text"])["rows"]
++        listed_body = json.loads(listed["result"]["content"][0]["text"])
++        rows = listed_body["rows"]
+         self.assertEqual(len(rows), 1)
++        self.assertEqual(listed_body["limit"], 100)
++        self.assertFalse(listed_body["truncated"])
+         searched = _mcp_call(
+             service,
+             "tools/call",
+-            {"name": "hub_directory_search", "arguments": {"query": "parser"}},
++            {"name": "hub_directory_search", "arguments": {"query": "parser", "limit": 1000}},
+         )
+-        rows = json.loads(searched["result"]["content"][0]["text"])["rows"]
++        searched_body = json.loads(searched["result"]["content"][0]["text"])
++        rows = searched_body["rows"]
+         self.assertEqual(len(rows), 1)
++        self.assertEqual(searched_body["limit"], 50)
++        self.assertFalse(searched_body["truncated"])
+         got = _mcp_call(
+             service,
+             "tools/call",
+
+diff --git a/tests/hub/test_shared_context.py b/tests/hub/test_shared_context.py
+index 9dd6912..83a80d4 100644
+--- a/tests/hub/test_shared_context.py
++++ b/tests/hub/test_shared_context.py
+@@ -426,6 +426,15 @@ class SharedContextApiTests(unittest.TestCase):
+         self.assertEqual(events[0]["event_id"], "evt-mcp-2")
+         self.assertEqual(events[1]["event_id"], "evt-mcp-1")
+         self.assertEqual(body["latest_seq"], 3)
++        self.assertEqual(body["limit"], 2)
++        self.assertTrue(body["truncated"])
++        bounded = _mcp_call(
++            service,
++            "tools/call",
++            {"name": "hub_context_read", "arguments": {"limit": 1000}},
++        )
++        bounded_body = json.loads(bounded["result"]["content"][0]["text"])
++        self.assertEqual(bounded_body["limit"], 50)
+ 
+ 
+ if __name__ == "__main__":
+
+diff --git a/dsh-plugin/src/config-plugin.ts b/dsh-plugin/src/config-plugin.ts
+--- a/dsh-plugin/src/config-plugin.ts
++++ b/dsh-plugin/src/config-plugin.ts
+@@ -1,8 +1,12 @@
+ import type { Context } from "@deepseek-ai/cordis";
++import type { StreamChunk, TokenUsage } from "@deepseek-ai/dsh-llm";
+ import {
+   loadAgentConfig,
+   resolveCredential,
+ } from "@agent-society/agent-config";
++import { homedir } from "node:os";
++import { join, resolve } from "node:path";
++import { recordAgentSocietyMetrics } from "./context-metrics.js";
+ 
+ export const name = "agent-society-config";
+ export const inject: string[] = [];
+@@ -29,9 +33,11 @@ const NON_SECRET_KEYS = [
+   "AGENT_REMOTE_MODEL",
+   "AGENT_SOCIETY_PROVIDER",
+   "AGENT_SOCIETY_MODEL",
++  "AGENT_SOCIETY_HUB_MCP",
+   "AGENT_SOCIETY_TOOL_POLICY",
+   "AGENT_SOCIETY_WEB_PROFILE",
+   "AGENT_SOCIETY_DIRECTORY",
++  "AGENT_SOCIETY_CONTEXT_MODE",
+   "AGENT_SOCIETY_QUESTIONS",
+   "AGENT_SOCIETY_CONTEXT",
+   "AGENT_SOCIETY_SESSION_MODE",
+@@ -47,6 +53,8 @@ const CREDENTIAL_KEYS = [
+ ];
+ 
+ export function apply(ctx: Context): void {
++  const dshHome = resolve(process.env.DSH_HOME?.trim() || join(homedir(), ".dsh"));
++  ctx.on("llm/stream", (_options, next) => observeUsage(dshHome, next));
+   const config = loadAgentConfig({ cwd: process.cwd() });
+   for (const key of NON_SECRET_KEYS) {
+     const value = config.values[key]?.trim();
+@@ -102,6 +110,34 @@ export function apply(ctx: Context): void {
+   if (!process.env.AGENT_SOCIETY_HUB_URL) {
+     process.env.AGENT_SOCIETY_HUB_URL = "";
+   }
++  // Direct `dsh web` and the dedicated worker profile do not pass through
++  // agent-host's child-environment builder. Once the shared config/keychain
++  // layer has supplied both Hub coordinates, enable the same MCP surface by
++  // default. An explicit `AGENT_SOCIETY_HUB_MCP=0` remains authoritative.
++  if (process.env.AGENT_SOCIETY_HUB_MCP === undefined) {
++    process.env.AGENT_SOCIETY_HUB_MCP =
++      process.env.AGENT_SOCIETY_HUB_URL &&
++      process.env.AGENT_SOCIETY_HUB_TOKEN
++        ? "1"
++        : "0";
++  }
++}
++
++function observeUsage(
++  dshHome: string,
++  next: () => AsyncIterable<StreamChunk>,
++): AsyncIterable<StreamChunk> {
++  return (async function* (): AsyncIterable<StreamChunk> {
++    let usage: TokenUsage | undefined;
++    try {
++      for await (const chunk of next()) {
++        if (chunk.type === "usage") usage = chunk.usage;
++        yield chunk;
++      }
++    } finally {
++      if (usage !== undefined) recordAgentSocietyMetrics(dshHome, { usage });
++    }
++  })();
+ }
+ 
+ function copy(source: string, target: string): void {
+
+diff --git a/agent-host/src/doctor.ts b/agent-host/src/doctor.ts
+--- a/agent-host/src/doctor.ts
++++ b/agent-host/src/doctor.ts
+@@ -1,4 +1,4 @@
+-import { accessSync, constants, existsSync, statSync } from "node:fs";
++import { accessSync, constants, existsSync, readFileSync, statSync } from "node:fs";
+ import { homedir } from "node:os";
+ import { dirname, join, resolve } from "node:path";
+ import { fileURLToPath } from "node:url";
+@@ -217,6 +217,33 @@ export async function runDoctor(
+   }
+ 
+   const dshHome = resolve(process.env.DSH_HOME?.trim() || join(homedir(), ".dsh"));
++  const metricsPath = join(dshHome, "agent-society-context-metrics.json");
++  const metrics = readMetrics(metricsPath);
++  if (metrics) {
++    const sessions =
++      metrics.contextUpdatesPerSession &&
++      typeof metrics.contextUpdatesPerSession === "object"
++        ? Object.keys(metrics.contextUpdatesPerSession).length
++        : 0;
++    add(
++      "context/cache metrics",
++      "ok",
++      `initialBytes=${numberMetric(metrics.contextInitialBytes)}; ` +
++        `deltaBytes=${numberMetric(metrics.contextDeltaBytes)}; ` +
++        `snapshotBytes=${numberMetric(metrics.contextSnapshotBytes)}; ` +
++        `sessions=${sessions}; ` +
++        `digestCalls=${numberMetric(metrics.digestModelCalls)}; ` +
++        `deduplicated=${numberMetric(metrics.digestDeduplicatedCalls)}; ` +
++        `hubSchema=${typeof metrics.hubToolSchemaHash === "string" ? metrics.hubToolSchemaHash : "none"}`,
++    );
++  } else {
++    add(
++      "context/cache metrics",
++      "warn",
++      `not recorded yet: ${metricsPath}`,
++      "start dsh once, then rerun agent doctor --json",
++    );
++  }
+   const dshCommand = config.dshCommand?.[0] ?? "dsh";
+   add(
+     "dsh runtime",
+@@ -370,6 +397,21 @@ export async function runDoctor(
+   if (checks.some((check) => check.status === "fail")) process.exitCode = 1;
+ }
+ 
++function readMetrics(path: string): Record<string, any> | undefined {
++  try {
++    const value = JSON.parse(readFileSync(path, "utf8"));
++    return value && typeof value === "object" && value.version === 1
++      ? value
++      : undefined;
++  } catch {
++    return undefined;
++  }
++}
++
++function numberMetric(value: unknown): string {
++  return typeof value === "number" && Number.isFinite(value) ? String(value) : "0";
++}
++
+ function fileMode(path: string | undefined): "ok" | "warn" | "missing" {
+   if (!path || !existsSync(path)) return "missing";
+   if (process.platform === "win32") return "ok";
+
+diff --git a/.env.agent.example b/.env.agent.example
+--- a/.env.agent.example
++++ b/.env.agent.example
+@@ -161,6 +161,9 @@ AGENT_REMOTE_MODEL=your-model-id
+ # Session directory sync (push local rows, pull the mirror) and the bounded
+ # prompt injection guard. AGENT_SOCIETY_DIRECTORY=0 disables both.
+ # AGENT_SOCIETY_DIRECTORY_PULL_SECONDS=10
++# Shared-context policy: balanced (initial <=1600 chars, deltas <=800 chars),
++# legacy (the previous full runtime snapshot), or off (workflow only).
++# AGENT_SOCIETY_CONTEXT_MODE=balanced
+ # Answer Hub questions addressed to this actor (worker + interactive bridge).
+ # AGENT_SOCIETY_QUESTIONS=0 disables answering entirely.
+ # Question policy for interactive processes: auto (answer while unattended,
+
+diff --git a/dsh-plugin/src/context-metrics.ts b/dsh-plugin/src/context-metrics.ts
+new file mode 100644
+--- /dev/null
++++ b/dsh-plugin/src/context-metrics.ts
+@@ -0,0 +1,198 @@
++/**
++ * Prompt/cache diagnostics that never persist prompt text, summaries, or
++ * credentials. The file is deliberately best-effort: an unwritable metrics
++ * path must not affect an interactive request or a digest.
++ */
++
++import { createHash } from 'node:crypto'
++import {
++  mkdirSync,
++  readFileSync,
++  renameSync,
++  writeFileSync,
++} from 'node:fs'
++import { dirname, join } from 'node:path'
++
++export type ContextMetricKind = 'initial' | 'delta' | 'snapshot'
++
++export interface AgentSocietyMetrics {
++  readonly version: 1
++  readonly updatedAt: number
++  readonly cacheReadTokens: number
++  readonly inputTokens: number
++  readonly uncachedInputTokens: number
++  readonly contextInitialBytes: number
++  readonly contextDeltaBytes: number
++  readonly contextSnapshotBytes: number
++  readonly contextUpdatesPerSession: Readonly<Record<string, {
++    readonly initial: number
++    readonly delta: number
++    readonly snapshot: number
++    readonly lastBytes: number
++  }>>
++  readonly digestModelCalls: number
++  readonly digestDeduplicatedCalls: number
++  readonly hubToolSchemaHash?: string
++}
++
++export function contextMetricsPath(dshHome: string): string {
++  return join(dshHome, 'agent-society-context-metrics.json')
++}
++
++export function recordAgentSocietyMetrics(
++  dshHome: string,
++  update: {
++    readonly context?: {
++      readonly kind: ContextMetricKind
++      readonly bytes: number
++      readonly sessionId?: string
++    }
++    readonly digestModelCall?: boolean
++    readonly digestDeduplicatedCall?: boolean
++    readonly hubToolSchemaHash?: string
++    readonly usage?: {
++      readonly inputTokens: number
++      readonly cacheReadTokens?: number
++      readonly cacheWriteTokens?: number
++    }
++  },
++): void {
++  try {
++    const path = contextMetricsPath(dshHome)
++    const current = loadMetrics(path)
++    const sessions: Record<string, {
++      initial: number
++      delta: number
++      snapshot: number
++      lastBytes: number
++    }> = { ...current.contextUpdatesPerSession }
++    const context = update.context
++    if (context?.sessionId) {
++      const previous = sessions[context.sessionId] ?? {
++        initial: 0,
++        delta: 0,
++        snapshot: 0,
++        lastBytes: 0,
++      }
++      sessions[context.sessionId] = {
++        ...previous,
++        [context.kind]: previous[context.kind] + 1,
++        lastBytes: Math.max(0, Math.floor(context.bytes)),
++      }
++      const keys = Object.keys(sessions)
++      if (keys.length > 256) delete sessions[keys[0] as string]
++    }
++    const next: AgentSocietyMetrics = {
++      version: 1,
++      updatedAt: Date.now(),
++      cacheReadTokens:
++        current.cacheReadTokens + Math.max(0, Math.floor(update.usage?.cacheReadTokens ?? 0)),
++      inputTokens:
++        current.inputTokens +
++        Math.max(
++          0,
++          Math.floor(
++            (update.usage?.inputTokens ?? 0) +
++            (update.usage?.cacheReadTokens ?? 0) +
++            (update.usage?.cacheWriteTokens ?? 0),
++          ),
++        ),
++      uncachedInputTokens:
++        current.uncachedInputTokens +
++        Math.max(0, Math.floor(update.usage?.inputTokens ?? 0)),
++      contextInitialBytes:
++        current.contextInitialBytes +
++        (context?.kind === 'initial' ? Math.max(0, Math.floor(context.bytes)) : 0),
++      contextDeltaBytes:
++        current.contextDeltaBytes +
++        (context?.kind === 'delta' ? Math.max(0, Math.floor(context.bytes)) : 0),
++      contextSnapshotBytes:
++        current.contextSnapshotBytes +
++        (context?.kind === 'snapshot' ? Math.max(0, Math.floor(context.bytes)) : 0),
++      contextUpdatesPerSession: sessions,
++      digestModelCalls:
++        current.digestModelCalls + (update.digestModelCall === true ? 1 : 0),
++      digestDeduplicatedCalls:
++        current.digestDeduplicatedCalls +
++        (update.digestDeduplicatedCall === true ? 1 : 0),
++      ...(update.hubToolSchemaHash
++        ? { hubToolSchemaHash: update.hubToolSchemaHash }
++        : current.hubToolSchemaHash
++          ? { hubToolSchemaHash: current.hubToolSchemaHash }
++          : {}),
++    }
++    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
++    const temporary = `${path}.${process.pid}.tmp`
++    writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, {
++      encoding: 'utf8',
++      mode: 0o600,
++    })
++    renameSync(temporary, path)
++  } catch {
++    // Diagnostics are strictly non-functional.
++  }
++}
++
++export function hashToolSchemas(tools: readonly unknown[]): string {
++  return createHash('sha256')
++    .update(JSON.stringify(stableValue(tools)))
++    .digest('hex')
++}
++
++function loadMetrics(path: string): AgentSocietyMetrics {
++  try {
++    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<AgentSocietyMetrics>
++    if (
++      parsed.version === 1 &&
++      typeof parsed.contextInitialBytes === 'number' &&
++      typeof parsed.contextDeltaBytes === 'number' &&
++      typeof parsed.contextSnapshotBytes === 'number' &&
++      typeof parsed.digestModelCalls === 'number' &&
++      typeof parsed.digestDeduplicatedCalls === 'number'
++    ) {
++      return {
++      version: 1,
++      updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : 0,
++        cacheReadTokens: parsed.cacheReadTokens ?? 0,
++        inputTokens: parsed.inputTokens ?? 0,
++        uncachedInputTokens: parsed.uncachedInputTokens ?? 0,
++        contextInitialBytes: parsed.contextInitialBytes,
++        contextDeltaBytes: parsed.contextDeltaBytes,
++        contextSnapshotBytes: parsed.contextSnapshotBytes,
++        contextUpdatesPerSession: parsed.contextUpdatesPerSession ?? {},
++        digestModelCalls: parsed.digestModelCalls,
++        digestDeduplicatedCalls: parsed.digestDeduplicatedCalls,
++        ...(parsed.hubToolSchemaHash
++          ? { hubToolSchemaHash: parsed.hubToolSchemaHash }
++          : {}),
++      }
++    }
++  } catch {
++    // Missing or partial metrics are normal on first start.
++  }
++  return {
++    version: 1,
++    updatedAt: 0,
++    cacheReadTokens: 0,
++    inputTokens: 0,
++    uncachedInputTokens: 0,
++    contextInitialBytes: 0,
++    contextDeltaBytes: 0,
++    contextSnapshotBytes: 0,
++    contextUpdatesPerSession: {},
++    digestModelCalls: 0,
++    digestDeduplicatedCalls: 0,
++  }
++}
++
++function stableValue(value: unknown): unknown {
++  if (Array.isArray(value)) return value.map(stableValue)
++  if (value !== null && typeof value === 'object') {
++    return Object.fromEntries(
++      Object.entries(value as Record<string, unknown>)
++        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
++        .map(([key, child]) => [key, stableValue(child)]),
++    )
++  }
++  return value
++}
+
+diff --git a/dsh-plugin/test/context-metrics.test.mjs b/dsh-plugin/test/context-metrics.test.mjs
+new file mode 100644
+--- /dev/null
++++ b/dsh-plugin/test/context-metrics.test.mjs
+@@ -0,0 +1,45 @@
++import { test } from 'node:test'
++import assert from 'node:assert/strict'
++
++import { hashToolSchemas, recordAgentSocietyMetrics } from '../lib/context-metrics.js'
++
++test('context metrics persist counters without prompt content', async () => {
++  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs')
++  const { join } = await import('node:path')
++  const { tmpdir } = await import('node:os')
++  const dshHome = mkdtempSync(join(tmpdir(), 'dsh-context-metrics-'))
++  try {
++    recordAgentSocietyMetrics(dshHome, {
++      context: { kind: 'initial', bytes: 123, sessionId: 'session-1' },
++      usage: { inputTokens: 7, cacheReadTokens: 11, cacheWriteTokens: 2 },
++      digestModelCall: true,
++    })
++    const metrics = JSON.parse(
++      readFileSync(join(dshHome, 'agent-society-context-metrics.json'), 'utf8'),
++    )
++    assert.equal(metrics.contextInitialBytes, 123)
++    assert.equal(metrics.inputTokens, 20)
++    assert.equal(metrics.uncachedInputTokens, 7)
++    assert.equal(metrics.cacheReadTokens, 11)
++    assert.equal(metrics.digestModelCalls, 1)
++    assert.equal(metrics.contextUpdatesPerSession['session-1'].initial, 1)
++    assert.equal(Object.prototype.hasOwnProperty.call(metrics, 'prompt'), false)
++    assert.equal(Object.prototype.hasOwnProperty.call(metrics, 'summary'), false)
++  } finally {
++    rmSync(dshHome, { recursive: true, force: true })
++  }
++})
++
++test('tool schema hashes ignore object insertion order', () => {
++  const first = [{
++    name: 'hub_tool',
++    description: 'tool',
++    parameters: { type: 'object', properties: { z: { type: 'string' }, a: { type: 'string' } } },
++  }]
++  const second = [{
++    parameters: { properties: { a: { type: 'string' }, z: { type: 'string' } }, type: 'object' },
++    description: 'tool',
++    name: 'hub_tool',
++  }]
++  assert.equal(hashToolSchemas(first), hashToolSchemas(second))
++})
+
+diff --git a/dsh-plugin/src/hub-tool-guard.ts b/dsh-plugin/src/hub-tool-guard.ts
+--- a/dsh-plugin/src/hub-tool-guard.ts
++++ b/dsh-plugin/src/hub-tool-guard.ts
+@@ -12,7 +12,15 @@
+ 
+ import type { Context } from '@deepseek-ai/cordis'
+ import type { ToolSchema } from '@deepseek-ai/dsh-llm'
+-import { createToolGuard, type ToolRuntimeLike } from './tool-guard.js'
++import { homedir } from 'node:os'
++import { join, resolve } from 'node:path'
++import { hashToolSchemas, recordAgentSocietyMetrics } from './context-metrics.js'
++import {
++  createToolGuard,
++  defaultAppend,
++  stableToolSchemas,
++  type ToolRuntimeLike,
++} from './tool-guard.js'
+ 
+ export const name = 'agent-society-hub-tool-guard'
+ export const inject: string[] = []
+@@ -23,8 +31,33 @@
+ let waitedForHubTools = false
+ 
+ export function apply(ctx: Context): void {
++  const dshHome = resolve(process.env.DSH_HOME?.trim() || join(homedir(), '.dsh'))
++  let lastSchemaHash: string | undefined
+   createToolGuard(ctx, {
+     name,
++    after: (assembly, found) => {
++      const appended = defaultAppend(assembly, found)
++      const current = appended ?? assembly
++      const hubTools = stableToolSchemas(
++        current.tools
++          .filter((tool) => tool.name.startsWith(HUB_TOOL_PREFIX))
++          .sort((a, b) => stringCompare(a.name, b.name)),
++      )
++      const schemaHash = hashToolSchemas(hubTools)
++      if (schemaHash !== lastSchemaHash) {
++        lastSchemaHash = schemaHash
++        recordAgentSocietyMetrics(dshHome, { hubToolSchemaHash: schemaHash })
++      }
++      if (hubTools.length === 0) return appended
++      let position = 0
++      const tools = current.tools.map((tool) =>
++        tool.name.startsWith(HUB_TOOL_PREFIX)
++          ? hubTools[position++] as ToolSchema
++          : tool,
++      )
++      const sameOrder = tools.every((tool, index) => tool === current.tools[index])
++      return sameOrder ? appended : { ...current, tools }
++    },
+     collect: async (tools: ToolRuntimeLike, scope?: object) => {
+       let visible = hubToolsIn(tools, scope)
+       if (visible.length === 0 && !waitedForHubTools) {
+@@ -54,3 +87,7 @@
+     await new Promise((resolve) => setTimeout(resolve, 100))
+   }
+ }
++
++function stringCompare(a: string, b: string): number {
++  return a < b ? -1 : a > b ? 1 : 0
++}
+
+diff --git a/dsh-plugin/cordis.patch.yml b/dsh-plugin/cordis.patch.yml
+--- a/dsh-plugin/cordis.patch.yml
++++ b/dsh-plugin/cordis.patch.yml
+@@ -73,8 +73,8 @@
+         nodeId: !!js process.env.AGENT_SOCIETY_NODE_ID
+         workspaceRoot: !!js process.env.AGENT_SOCIETY_WORKSPACE_ROOT ?? process.cwd()
+         provider: !!js process.env.AGENT_SOCIETY_PROVIDER ?? 'deepseek-official'
+-        model: !!js process.env.DSH_MODEL ?? process.env.AGENT_SOCIETY_MODEL ?? 'deepseek-v4-flash'
+-        maxTokens: !!js Number(process.env.AGENT_SOCIETY_MAX_TOKENS ?? 2048)
++        model: !!js process.env.AGENT_SOCIETY_MODEL ?? process.env.AGENT_DSH_MODEL ?? process.env.DSH_MODEL ?? process.env.AGENT_REMOTE_MODEL ?? 'deepseek-v4-flash'
++        maxTokens: !!js Number(process.env.AGENT_SOCIETY_MAX_TOKENS ?? 768)
+         pollSeconds: !!js Number(process.env.AGENT_SOCIETY_DIGEST_POLL_SECONDS ?? 15)
+         idleSeconds: !!js Number(process.env.AGENT_SOCIETY_DIGEST_IDLE_SECONDS ?? 60)
+         summarize: !!js process.env.AGENT_SOCIETY_CONTEXT_SUMMARIZE !== '0'
+
+diff --git a/dsh-plugin/README.md b/dsh-plugin/README.md
+--- a/dsh-plugin/README.md
++++ b/dsh-plugin/README.md
+@@ -118,6 +118,9 @@
+ | `AGENT_SOCIETY_WORKSPACE_ROOT` | process cwd | Allowed task workspace root |
+ | `AGENT_SOCIETY_SESSION_MODE` | `per_task` | `per_task` or `continuous` |
+ | `AGENT_SOCIETY_TOOL_POLICY` | `full` | Default `full` / `read_only` / `no_tools` |
++| `AGENT_SOCIETY_CONTEXT_MODE` | `balanced` | Shared-context `balanced` / `legacy` / `off` |
++| `AGENT_SOCIETY_CONTEXT` | `1` | Digest writes; `0` keeps the historical digest-write disable switch |
++| `AGENT_SOCIETY_DIRECTORY` | enabled | Directory sync/injection; `0` is a hard disable |
+ | `AGENT_SOCIETY_SESSION_COMPRESSION` | `none` | Session log encoding; `zstd` opts into compressed logs |
+ | `AGENT_SOCIETY_POLL_SECONDS` | `20` | Task claim interval |
+ | `AGENT_SOCIETY_LEASE_SECONDS` | `300` | Hub lease duration |
+@@ -129,8 +132,14 @@
+ | `AGENT_SELF_UPDATE` | `1` | Allow Hub `input.action: "self_update"` tasks |
+ | `AGENT_SOCIETY_PROVIDER` | `deepseek-official` | dsh provider route |
+ | `AGENT_SOCIETY_MODEL` / `DSH_MODEL` | `deepseek-v4-flash` | dsh model id |
+-| `AGENT_SOCIETY_MAX_TOKENS` | `8192` | Per-request output cap |
++| `AGENT_SOCIETY_MAX_TOKENS` | `8192` | Worker request output cap; digest calls default to 768 and never exceed 1024 |
+ 
++Balanced context messages are append-only session user messages: the first is
++at most 1600 characters and later deltas are at most 800. They contain only
++summary fields and revisions; use the Hub MCP tools for full objective/result
++content. Cache diagnostics are written without prompt content to
++`$DSH_HOME/agent-society-context-metrics.json`.
++
+ ## Observing runs
+ 
+ `./agent observe <run_id|task_id>` reads the dsh session transcript from the

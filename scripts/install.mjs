@@ -2,23 +2,28 @@
 /**
  * dsh-agent-society-combo installer.
  *
- * One-command bootstrap for the pinned combination:
- * deepseek-harness + dsh-TUI + AgentSociety + dsh-anchored-standard.
- * The installer only manages the files under `--root` plus non-secret links
- * under `$DSH_HOME`; credentials are never copied into this repository.
+ * dsh-first AgentSociety installer.
+ *
+ * The default path consumes the published dsh and AgentSociety packages. The
+ * explicit `--source` path keeps the old locked checkout workflow for source
+ * development and upstream adaptation. Credentials are never copied into
+ * this repository.
  */
 
 import {
+  accessSync,
   chmodSync,
   copyFileSync,
   cpSync,
+  constants,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   renameSync,
   rmSync,
-  statSync,
+  realpathSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
@@ -33,6 +38,9 @@ const comboRoot = resolve(here, '..')
 const manifest = JSON.parse(
   readFileSync(join(comboRoot, 'sources.lock.json'), 'utf8'),
 )
+const published = manifest.published || {}
+const publishedDsh = published.dsh || {}
+const publishedPlugin = published.agentSocietyPlugin || {}
 
 const args = process.argv.slice(2)
 const options = parseArgs(args)
@@ -60,6 +68,7 @@ await main()
 
 function parseArgs(argv) {
   const result = {
+    mode: process.env.COMBO_MODE || 'npm',
     root:
       process.env.COMBO_ROOT ||
       join(homedir(), '.local', 'share', 'dsh-agent-society-combo'),
@@ -76,6 +85,11 @@ function parseArgs(argv) {
     sshPlugin: process.env.COMBO_SSH_PLUGIN || 'dsh-ssh-ops@0.2.1',
     withOpenCodeFull: process.env.COMBO_OPENCODE_FULL === '1',
     withSubscriptions: process.env.COMBO_SUBSCRIPTIONS === '1',
+    withHost: process.env.COMBO_WITH_HOST === '1',
+    withHostExplicit: process.env.COMBO_WITH_HOST === '1',
+    dshPackage: process.env.COMBO_DSH_PACKAGE || publishedDsh.package || '@deepseek-ai/dsh',
+    dshVersion: process.env.COMBO_DSH_VERSION || publishedDsh.version || '0.1.2-alpha.4',
+    pluginSpec: process.env.COMBO_AGENT_PLUGIN || publishedPlugin.package || '@agent-society/dsh-agent-society',
     dryRun: false,
     yes: false,
   }
@@ -86,8 +100,21 @@ function parseArgs(argv) {
     else if (arg.startsWith('--root=')) result.root = arg.slice(7)
     else if (arg === '--preset') { result.preset = next; index += 1 }
     else if (arg.startsWith('--preset=')) result.preset = arg.slice(9)
-    else if (arg === '--source') { result.source.push(next); index += 1 }
-    else if (arg.startsWith('--source=')) result.source.push(arg.slice(9))
+    else if (arg === '--source') {
+      if (next && !next.startsWith('--') && next.includes('=')) {
+        result.source.push(next)
+        result.mode = 'source'
+        index += 1
+      } else {
+        result.mode = 'source'
+      }
+    }
+    else if (arg.startsWith('--source=')) {
+      result.source.push(arg.slice(9))
+      result.mode = 'source'
+    }
+    else if (arg === '--mode') { result.mode = next; index += 1 }
+    else if (arg.startsWith('--mode=')) result.mode = arg.slice(7)
     else if (arg === '--patch-only') result.patchOnly = true
     else if (arg === '--skip-deps') result.skipDeps = true
     else if (arg === '--skip-build') result.skipBuild = true
@@ -99,6 +126,12 @@ function parseArgs(argv) {
     else if (arg.startsWith('--with-ssh=')) { result.withSsh = true; result.sshPlugin = arg.slice(11) }
     else if (arg === '--with-opencode-full') result.withOpenCodeFull = true
     else if (arg === '--with-subscriptions') result.withSubscriptions = true
+    else if (arg === '--with-host') { result.withHost = true; result.withHostExplicit = true }
+    else if (arg === '--without-host') { result.withHost = false; result.withHostExplicit = true }
+    else if (arg === '--dsh-package') { result.dshPackage = next; index += 1 }
+    else if (arg.startsWith('--dsh-package=')) result.dshPackage = arg.slice(14)
+    else if (arg === '--plugin') { result.pluginSpec = next; index += 1 }
+    else if (arg.startsWith('--plugin=')) result.pluginSpec = arg.slice(9)
     else if (arg === '--dry-run') result.dryRun = true
     else if (arg === '--yes' || arg === '-y') result.yes = true
     else if (arg === '--help' || arg === '-h') {
@@ -114,12 +147,16 @@ function parseArgs(argv) {
 function usage() {
   return `Usage: node scripts/install.mjs [options]
 
+Modes:
+  --mode npm          published dsh/plugin installation (default)
+  --source            locked source checkout installation
+
 Options:
   --root <dir>        install root (default ~/.local/share/dsh-agent-society-combo)
   --preset <id>       default TUI preset: anchored-standard (default), standard,
-                      code, minimal, or cordis
+                      ptc, minimal, or cordis
   --source <name>=<path>
-                      use an existing checkout instead of cloning
+                      source mode; use an existing checkout instead of cloning
   --patch-only        clone + patch only; no dependency install/build/link
   --skip-deps         do not install npm/pnpm dependencies
   --skip-build        do not build
@@ -127,14 +164,18 @@ Options:
   --skip-config       do not write default TUI preferences
   --force-build       rebuild even when build markers exist
   --update            refresh this install to the current sources.lock.json
-  --with-ssh [spec]   add an SSH ops plugin to the agent-society-web profile
-                      (default dsh-ssh-ops@0.2.1)
+  --with-ssh [spec]   add an SSH ops plugin to the web profile
+                      (source mode uses agent-society-web; default dsh-ssh-ops@0.2.1)
   --with-opencode-full
                       add the dsh-opencode-full bundle and switch the web
                       profile default preset to opencode-full
   --with-subscriptions
                       add dsh-plugin-subscriptions (ChatGPT/Claude/Grok
                       subscription LLM providers) to the web profile
+  --with-host          install the optional @agent-society/agent-host package
+  --without-host       do not install the optional agent-host package
+  --dsh-package <spec> dsh package used by npm mode
+  --plugin <spec>      AgentSociety plugin package used by npm mode
   --dry-run           print the plan without changing anything`
 }
 
@@ -144,10 +185,107 @@ async function main() {
       `Unsupported preset "${options.preset}". Supported: ${manifest.supportedPresets.join(', ')}`,
     )
   }
+  if (!['npm', 'source'].includes(options.mode)) {
+    throw new Error(`Unsupported Combo mode "${options.mode}". Use --mode npm or --source`)
+  }
   if (options.dryRun) {
     printPlan()
     return
   }
+  if (options.mode === 'npm') {
+    await installPublishedMode()
+    return
+  }
+  await installSourceMode()
+}
+
+async function installPublishedMode() {
+  console.log(`dsh-first npm installer (dsh-home: ${dshHome})${options.update ? ' [update]' : ''}`)
+  const previousInstall = options.update
+    ? readJson(join(stateRoot, 'combo-install.json'))
+    : undefined
+  const installHost =
+    options.withHost ||
+    (options.update && !options.withHostExplicit && previousInstall?.withHost === true)
+  let dsh = resolveDshInvocation()
+  if (!dsh) {
+    throw new Error(
+      `dsh was not found or is not executable. Install it first with: npm install -g ${options.dshPackage}`,
+    )
+  }
+  if (options.update) {
+    console.log(`[npm] update ${options.dshPackage}@${options.dshVersion}`)
+    runChecked('npm', ['install', '--global', `${options.dshPackage}@${options.dshVersion}`], comboRoot)
+    dsh = resolveDshInvocation()
+    if (!dsh) throw new Error('dsh disappeared after the global package update')
+  }
+  if (!which('pnpm') && !which('corepack')) {
+    throw new Error('pnpm is required by `dsh plugin`; install pnpm or enable corepack')
+  }
+  console.log(`[ok] dsh ${dsh.command} ${dsh.args.join(' ')}`.trim())
+  const version = runCapture(dsh.command, [...dsh.args, '--version'], comboRoot, false)
+  const actualVersion = version.stdout.trim().split(/\s+/u).at(-1)
+  if (version.status !== 0 || actualVersion !== options.dshVersion) {
+    throw new Error(
+      'dsh ' +
+        (actualVersion || 'unknown') +
+        ' is incompatible. This Combo release requires ' +
+        options.dshPackage +
+        '@' +
+        options.dshVersion +
+        ' from Fantasia-Infinity/deepseek-harness',
+    )
+  }
+  const profiles = ['web', 'headless', 'agent-society-worker']
+  for (const profile of profiles) {
+    const verb = options.update ? 'update' : 'add'
+    console.log(`[plugin] ${verb} ${options.pluginSpec} -> ${profile}`)
+    try {
+      runDsh(dsh, ['plugin', '--profile', profile, verb, options.pluginSpec])
+    } catch (error) {
+      if (verb !== 'update') throw error
+      console.warn(`[plugin] ${profile} did not have an updateable entry; adding it instead`)
+      runDsh(dsh, ['plugin', '--profile', profile, 'add', options.pluginSpec])
+    }
+  }
+  if (options.withSsh) {
+    console.log(`[plugin] add ${options.sshPlugin} -> web`)
+    runDsh(dsh, ['plugin', '--profile', 'web', 'add', options.sshPlugin])
+  }
+  if (options.withSubscriptions) {
+    console.log('[plugin] add dsh-plugin-subscriptions -> web')
+    runDsh(dsh, ['plugin', '--profile', 'web', 'add', 'dsh-plugin-subscriptions'])
+  }
+  ensureWorkerProfileActivation()
+  if (installHost) {
+    console.log('[npm] install optional @agent-society/agent-host')
+    runChecked('npm', ['install', '--global', '@agent-society/agent-host'], comboRoot)
+  }
+  writeInstallState({
+    mode: 'npm',
+    dshPackage: options.dshPackage,
+    expectedDshVersion: options.dshVersion,
+    dshSource: 'Fantasia-Infinity/deepseek-harness',
+    dshSourceCommit: manifest.components['deepseek-harness']?.commit,
+    pluginSpec: options.pluginSpec,
+    withHost: installHost,
+    profiles,
+    updatedAt: new Date().toISOString(),
+  })
+  if (!options.skipLinks) writeComboLauncher()
+  console.log('')
+  console.log('Install complete (dsh-first npm mode).')
+  console.log(`  DSH_HOME: ${dshHome}`)
+  console.log(`  plugin:   ${options.pluginSpec}`)
+  console.log('')
+  console.log('Next steps:')
+  console.log('  agent setup --mode local   # optional thin management CLI')
+  console.log('  agent doctor              # static checks; add --live for network checks')
+  console.log('  dsh web                   # standard dsh Web profile')
+  console.log('  dsh --profile agent-society-worker  # Hub worker profile')
+}
+
+async function installSourceMode() {
   console.log(`dsh-agent-society-combo installer (root: ${root})${options.update ? ' [update]' : ''}`)
   console.log(`preset: ${options.preset}  dsh-home: ${dshHome}`)
 
@@ -188,8 +326,17 @@ async function main() {
       openCodeFull,
       options.withSubscriptions,
     )
+    writeComboLauncher()
   }
   if (!options.skipConfig) await writePreferences()
+  writeInstallState({
+    mode: 'source',
+    root,
+    dshHome,
+    preset: options.preset,
+    updatedAt: new Date().toISOString(),
+    profiles: ['web', 'headless', 'agent-society-web', 'agent-society-worker'],
+  })
 
   console.log('')
   console.log('Install complete.')
@@ -202,11 +349,26 @@ async function main() {
   console.log('')
   console.log('Next steps:')
   console.log('  1. Make sure "' + binDir + '" is on PATH.')
-  console.log('  2. Configure credentials:  cd ' + agentSociety + ' && ./agent setup')
-  console.log('  3. Start:                  agent')
+  console.log('  agent setup       # choose local / hub-worker / dispatch-only')
+  console.log('  agent doctor      # static checks; add --live for network checks')
+  console.log('  dsh web           # local DSH Web with AgentSociety')
+  console.log('  dsh --profile agent-society-worker  # receive Hub tasks when configured')
 }
 
 function printPlan() {
+  if (options.mode === 'npm') {
+    console.log('Plan (published dsh-first mode):')
+    console.log(`  verify dsh package ${options.dshPackage}`)
+    for (const profile of ['web', 'headless', 'agent-society-worker']) {
+      console.log(`  dsh plugin --profile ${profile} ${options.update ? 'update' : 'add'} ${options.pluginSpec}`)
+    }
+    if (options.withSsh) console.log(`  dsh plugin --profile web add ${options.sshPlugin}`)
+    if (options.withSubscriptions) console.log('  dsh plugin --profile web add dsh-plugin-subscriptions')
+    console.log('  write worker profile marker .env (AGENT_SOCIETY_WORKER=1)')
+    console.log('  launch worker with dsh --profile agent-society-worker (profile-scoped activation)')
+    if (options.withHost) console.log('  npm install --global @agent-society/agent-host')
+    return
+  }
   const names = [
     'deepseek-harness',
     'dsh-tui',
@@ -224,10 +386,93 @@ function printPlan() {
   console.log('  copy ~/.dsh/.agent-presets/anchored-standard')
   console.log('  write ~/.dsh-tui/agent-preset.json = ' + options.preset)
   console.log('  links: dsh, dsh-tui, agent')
-  console.log(`  web profile: agent-society-web (core dsh-agent-society, preset ${options.preset})` + (options.withSsh ? ` + ${options.sshPlugin}` : ''))
+  console.log(`  web profiles: web + agent-society-web (core dsh-agent-society, preset ${options.preset})` + (options.withSsh ? ` + ${options.sshPlugin}` : ''))
+  console.log('  headless profile: headless (core dsh-agent-society)')
   if (options.withOpenCodeFull) {
     console.log('  opencode-full: bundle + preset + web default preset')
   }
+}
+
+function resolveDshInvocation() {
+  const configured = process.env.COMBO_DSH_COMMAND?.trim()
+  const command = configured || 'dsh'
+  const found = command.includes('/') || command.includes('\\')
+    ? command
+    : which(command)
+  if (!found || !existsSync(found)) return undefined
+  if (platform() === 'win32' || isExecutable(found)) return { command: found, args: [] }
+  try {
+    const target = realpathSync(found)
+    if (target.endsWith('.js')) return { command: process.execPath, args: [target] }
+  } catch {}
+  return undefined
+}
+
+function runDsh(invocation, args) {
+  runChecked(invocation.command, [...invocation.args, ...args], comboRoot, true, {
+    DSH_HOME: dshHome,
+  })
+}
+
+function ensureWorkerProfileActivation() {
+  const profileDir = join(dshHome, 'profiles', 'agent-society-worker')
+  ensureDir(profileDir)
+  const envPath = join(profileDir, '.env')
+  const current = existsSync(envPath) ? readFileSync(envPath, 'utf8') : ''
+  const lines = current
+    .split(/\r?\n/u)
+    .filter((line) => !/^\s*AGENT_SOCIETY_WORKER\s*=/u.test(line))
+  if (lines.at(-1)?.trim()) lines.push('')
+  lines.push('AGENT_SOCIETY_WORKER=1')
+  writeFileSync(
+    envPath,
+    `${lines.join('\n').replace(/\n+$/u, '')}\n`,
+    { mode: 0o600 },
+  )
+  if (platform() !== 'win32') chmodSync(envPath, 0o600)
+}
+
+function writeInstallState(state) {
+  ensureDir(root)
+  ensureDir(stateRoot)
+  writeFileSync(
+    join(stateRoot, 'combo-install.json'),
+    `${JSON.stringify(state, null, 2)}\n`,
+    { mode: 0o600 },
+  )
+}
+
+function persistInstallerKit() {
+  const installerRoot = join(root, 'installer')
+  ensureDir(installerRoot)
+  if (resolve(comboRoot, 'scripts') !== resolve(installerRoot, 'scripts')) {
+    cpSync(join(comboRoot, 'scripts'), join(installerRoot, 'scripts'), {
+      recursive: true,
+      force: true,
+    })
+  }
+  if (resolve(comboRoot, 'patches') !== resolve(installerRoot, 'patches')) {
+    cpSync(join(comboRoot, 'patches'), join(installerRoot, 'patches'), {
+      recursive: true,
+      force: true,
+    })
+  }
+  if (resolve(comboRoot, 'sources.lock.json') !== resolve(installerRoot, 'sources.lock.json')) {
+    copyFileSync(join(comboRoot, 'sources.lock.json'), join(installerRoot, 'sources.lock.json'))
+  }
+  return installerRoot
+}
+
+function writeComboLauncher() {
+  const installerRoot = persistInstallerKit()
+  ensureDir(binDir)
+  const source = join(installerRoot, 'scripts', 'combo.mjs')
+  if (platform() === 'win32') {
+    writeCmd('combo', ['node', source])
+  } else {
+    linkExecutable(source, join(binDir, 'combo'))
+  }
+  console.log(`[link] combo -> ${source}`)
 }
 
 async function installComponent(name) {
@@ -247,6 +492,11 @@ async function installComponent(name) {
   const previousState = existsSync(stateFile)
     ? readJson(stateFile)
     : undefined
+  const actualCommit = existsSync(join(dir, '.git'))
+    ? runCapture('git', ['rev-parse', 'HEAD'], dir, false)
+    : undefined
+  const checkoutMatches =
+    actualCommit?.status === 0 && actualCommit.stdout.trim() === comp.commit
   const sameState =
     previousState &&
     // Legacy state files predate the repo field; treat them as matching so
@@ -262,7 +512,7 @@ async function installComponent(name) {
         patches: desiredState.patches,
         files: desiredState.files,
       }) &&
-    existsSync(join(dir, '.git'))
+    checkoutMatches
   if (sameState) {
     console.log(`[ok] ${name} already at ${comp.commit}`)
     return false
@@ -391,17 +641,132 @@ async function installDependencies(harness, tui, agentSociety, openCodeFull, cha
 
   const installAgentHost = changed.has('agent-society') || !existsSync(join(agentSociety, 'agent-host', 'node_modules'))
   console.log(installAgentHost ? '[deps] AgentSociety agent-host npm ci' : '[skip] agent-host node_modules current')
-  if (installAgentHost) runChecked('npm', ['ci'], join(agentSociety, 'agent-host'))
+  if (installAgentHost) {
+    installSourcePackageWithoutLocalDependency(
+      join(agentSociety, 'agent-host'),
+      '@agent-society/agent-config',
+    )
+  }
+
+  const agentConfig = join(agentSociety, 'agent-config')
+  if (existsSync(join(agentConfig, 'package.json'))) {
+    const installAgentConfig =
+      changed.has('agent-society') ||
+      !existsSync(join(agentConfig, 'node_modules', 'typescript'))
+    console.log(
+      installAgentConfig
+        ? '[deps] AgentSociety shared config npm install'
+        : '[skip] shared config node_modules current',
+    )
+    if (installAgentConfig) {
+      runChecked('npm', ['install', '--ignore-scripts', '--no-package-lock'], agentConfig)
+    }
+  }
 
   const installPlugin = changed.has('agent-society') || !existsSync(join(agentSociety, 'dsh-plugin', 'node_modules', 'typescript'))
   console.log(installPlugin ? '[deps] AgentSociety dsh-plugin npm ci' : '[skip] dsh-plugin node_modules current')
-  if (installPlugin) runChecked('npm', ['ci'], join(agentSociety, 'dsh-plugin'))
+  if (installPlugin) {
+    // The pinned DSH workspace is currently an alpha release that is not yet
+    // published to npm. Install only the plugin's published dependencies;
+    // local DSH packages are linked from the checkout immediately before the
+    // plugin build. Keep the source manifest and lockfile byte-for-byte
+    // unchanged after this bootstrap install.
+    const pluginDir = join(agentSociety, 'dsh-plugin')
+    if (existsSync(join(harness, 'packages', 'core', 'agent', 'package.json'))) {
+      const packageFile = join(pluginDir, 'package.json')
+      const lockFile = join(pluginDir, 'package-lock.json')
+      const originalPackage = readFileSync(packageFile, 'utf8')
+      const hadLock = existsSync(lockFile)
+      const originalLock = hadLock ? readFileSync(lockFile, 'utf8') : undefined
+      try {
+        const packageJson = JSON.parse(originalPackage)
+        for (const section of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+          const values = packageJson[section]
+          if (!values || typeof values !== 'object') continue
+          for (const name of Object.keys(values)) {
+            if (
+              name.startsWith('@deepseek-ai/dsh-') ||
+              name === '@agent-society/agent-config'
+            ) delete values[name]
+          }
+        }
+        writeFileSync(packageFile, `${JSON.stringify(packageJson, null, 2)}\n`)
+        if (hadLock) rmSync(lockFile, { force: true })
+        runChecked('npm', ['install', '--ignore-scripts', '--no-package-lock', '--legacy-peer-deps'], pluginDir)
+      } finally {
+        writeFileSync(packageFile, originalPackage)
+        if (hadLock) writeFileSync(lockFile, originalLock)
+        else rmSync(lockFile, { force: true })
+      }
+    } else {
+      runChecked('npm', ['ci'], pluginDir)
+    }
+  }
 
   if (openCodeFull) {
     const installOpenCodeFull = changed.has('dsh-opencode-full') || !existsSync(join(openCodeFull, 'node_modules', 'typescript'))
     console.log(installOpenCodeFull ? '[deps] dsh-opencode-full npm ci' : '[skip] dsh-opencode-full node_modules current')
     if (installOpenCodeFull) runChecked('npm', ['ci'], openCodeFull)
   }
+}
+
+function installSourcePackageWithoutLocalDependency(packageDir, dependency) {
+  const packageFile = join(packageDir, 'package.json')
+  const lockFile = join(packageDir, 'package-lock.json')
+  const originalPackage = readFileSync(packageFile, 'utf8')
+  const hadLock = existsSync(lockFile)
+  const originalLock = hadLock ? readFileSync(lockFile, 'utf8') : undefined
+  try {
+    const packageJson = JSON.parse(originalPackage)
+    for (const section of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+      const values = packageJson[section]
+      if (values && typeof values === 'object') delete values[dependency]
+    }
+    writeFileSync(packageFile, JSON.stringify(packageJson, null, 2) + '\n')
+    if (hadLock) rmSync(lockFile, { force: true })
+    runChecked(
+      'npm',
+      ['install', '--ignore-scripts', '--no-package-lock', '--legacy-peer-deps'],
+      packageDir,
+    )
+  } finally {
+    writeFileSync(packageFile, originalPackage)
+    if (hadLock) writeFileSync(lockFile, originalLock)
+    else rmSync(lockFile, { force: true })
+  }
+}
+
+function linkLocalDshPackages(harness, pluginDir) {
+  const packageRoot = join(pluginDir, 'node_modules', '@deepseek-ai')
+  ensureDir(packageRoot)
+  const packages = []
+  const visit = (dir, depth = 0) => {
+    if (depth > 4 || !existsSync(dir)) return
+    let entries
+    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === 'node_modules' || entry.name === '.git') continue
+      const child = join(dir, entry.name)
+      const manifestPath = join(child, 'package.json')
+      if (existsSync(manifestPath)) {
+        try {
+          const packageJson = JSON.parse(readFileSync(manifestPath, 'utf8'))
+          if (typeof packageJson.name === 'string' && packageJson.name.startsWith('@deepseek-ai/')) packages.push({ name: packageJson.name, dir: child })
+        } catch {}
+      }
+      visit(child, depth + 1)
+    }
+  }
+  for (const root of [join(harness, 'packages'), join(harness, 'apps'), join(harness, 'vendor')]) visit(root)
+  const seen = new Set()
+  for (const item of packages) {
+    if (seen.has(item.name)) continue
+    seen.add(item.name)
+    const target = join(packageRoot, item.name.slice('@deepseek-ai/'.length))
+    if (existsSync(target) || isLink(target)) rmSync(target, { recursive: true, force: true })
+    symlinkSync(item.dir, target, 'dir')
+  }
+  console.log(`[link] ${seen.size} local DSH packages -> ${packageRoot}`)
 }
 
 async function buildAll(harness, tui, agentSociety, openCodeFull, changed) {
@@ -441,7 +806,11 @@ async function buildAll(harness, tui, agentSociety, openCodeFull, changed) {
   }
 
   const tuiPlugin = join(tui, 'lib', 'types', 'index.js')
-  if (options.forceBuild || changed.has('dsh-tui') || !existsSync(tuiPlugin)) {
+  if (
+    options.forceBuild ||
+    changed.has('dsh-tui') ||
+    !existsSync(tuiPlugin)
+  ) {
     console.log('[build] dsh-TUI')
     if (platform() === 'win32') {
       const bash = which('bash')
@@ -463,9 +832,22 @@ async function buildAll(harness, tui, agentSociety, openCodeFull, changed) {
     console.log('[skip] dsh-TUI already built')
   }
 
+  const agentConfig = join(agentSociety, 'agent-config')
+  if (existsSync(join(agentConfig, 'package.json'))) {
+    if (options.forceBuild || changed.has('agent-society') || !existsSync(join(agentConfig, 'lib', 'index.js'))) {
+      console.log('[build] AgentSociety shared config')
+      runChecked('npm', ['run', 'build'], agentConfig)
+    } else {
+      console.log('[skip] shared config already built')
+    }
+    linkLocalPackage(agentConfig, join(agentSociety, 'agent-host'), '@agent-society/agent-config')
+    linkLocalPackage(agentConfig, join(agentSociety, 'dsh-plugin'), '@agent-society/agent-config')
+  }
+
   console.log('[build] AgentSociety agent-host')
   runChecked('npm', ['run', 'build'], join(agentSociety, 'agent-host'))
 
+  linkLocalDshPackages(harness, join(agentSociety, 'dsh-plugin'))
   console.log('[build] AgentSociety dsh-plugin')
   runChecked('npm', ['run', 'build'], join(agentSociety, 'dsh-plugin'))
 
@@ -531,23 +913,84 @@ async function createLinks(harness, tui, agentSociety) {
     }
   }
 
-  console.log('[profile] agent-society-worker')
-  const dshBin = join(binDir, platform() === 'win32' ? 'dsh.cmd' : 'dsh')
-  const profile = join(dshHome, 'profiles', 'agent-society-worker')
-  if (!existsSync(join(profile, 'package.json'))) {
-    const result = runCapture(
-      process.execPath,
-      [join(harness, 'apps', 'cli', 'lib', 'bin.js'), 'plugin', '--profile', 'agent-society-worker', 'add', pluginSource],
-      comboRoot,
-      true,
-    )
-    if (result.status !== 0) {
-      console.warn('[warn] dsh plugin profile bootstrap failed; run manually:')
-      console.warn(`  ${dshBin} plugin --profile agent-society-worker add ${pluginSource}`)
-    }
-  } else {
-    console.log('[skip] profile already exists')
+  // Source mode uses the same standard dsh profile names as npm mode. Keep
+  // agent-society-web below as a compatibility profile for older Host/bridge
+  // configurations, but make `dsh web` and `dsh --profile headless` carry the
+  // local AgentSociety bundle too.
+  for (const profileName of ['web', 'headless', 'agent-society-worker']) {
+    ensureSourcePluginProfile(harness, pluginSource, profileName)
   }
+  ensureWorkerProfileActivation()
+  ensureSessionCompressionCompatibility()
+}
+
+function ensureSourcePluginProfile(harness, pluginSource, profileName) {
+  const dshBin = join(binDir, platform() === 'win32' ? 'dsh.cmd' : 'dsh')
+  const result = runCapture(
+    process.execPath,
+    [join(harness, 'apps', 'cli', 'lib', 'bin.js'), 'plugin', '--profile', profileName, 'add', pluginSource],
+    comboRoot,
+    true,
+    { DSH_HOME: dshHome },
+  )
+  if (result.status !== 0) {
+    console.warn(`[warn] dsh plugin profile bootstrap failed for ${profileName}; run manually:`)
+    console.warn(`  ${dshBin} plugin --profile ${profileName} add ${pluginSource}`)
+  } else {
+    console.log(`[profile] ${profileName} includes AgentSociety source plugin`)
+  }
+}
+
+function ensureSessionCompressionCompatibility() {
+  const envPath = join(dshHome, '.env')
+  const current = existsSync(envPath) ? readFileSync(envPath, 'utf8') : ''
+  if (/^\s*AGENT_SOCIETY_SESSION_COMPRESSION\s*=/mu.test(current)) return
+
+  const sessionRoot = join(dshHome, 'sessions')
+  const hasZstd = findFileSuffix(sessionRoot, '.jsonl.zstd')
+  const hasPlain = findFileSuffix(sessionRoot, '.jsonl')
+  if (!hasZstd || hasPlain) {
+    if (hasZstd && hasPlain) {
+      console.warn(`[warn] mixed session compression detected under ${sessionRoot}; set AGENT_SOCIETY_SESSION_COMPRESSION explicitly before starting dsh`)
+    }
+    return
+  }
+
+  const lines = current.split(/\r?\n/u)
+  if (lines.at(-1)?.trim()) lines.push('')
+  lines.push('AGENT_SOCIETY_SESSION_COMPRESSION=zstd')
+  writeFileSync(
+    envPath,
+    `${lines.join('\n').replace(/\n+$/u, '')}\n`,
+    { mode: 0o600 },
+  )
+  if (platform() !== 'win32') chmodSync(envPath, 0o600)
+  console.log(`[config] existing .jsonl.zstd sessions detected; set AGENT_SOCIETY_SESSION_COMPRESSION=zstd in ${envPath}`)
+}
+
+function findFileSuffix(dir, suffix) {
+  if (!existsSync(dir)) return false
+  let entries
+  try {
+    entries = readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return false
+  }
+  for (const entry of entries) {
+    const child = join(dir, entry.name)
+    if (entry.isFile() && entry.name.endsWith(suffix)) return true
+    if (entry.isDirectory() && findFileSuffix(child, suffix)) return true
+  }
+  return false
+}
+
+function linkLocalPackage(source, packageDir, packageName) {
+  const scope = join(packageDir, 'node_modules', packageName.split('/')[0])
+  const target = join(packageDir, 'node_modules', packageName)
+  ensureDir(scope)
+  if (existsSync(target) || isLink(target)) rmSync(target, { recursive: true, force: true })
+  symlinkSync(source, target, 'dir')
+  console.log('[link] ' + target + ' -> ' + source)
 }
 
 async function loadOpenCodeFullInstallKit(openCodeFull) {
@@ -746,10 +1189,24 @@ function linkOrCopy(source, target) {
 }
 
 function linkExecutable(source, target) {
-  if (existsSync(target) || isLink(target)) {
-    console.log(`[keep] ${target} already exists`)
-    return
+  if (!existsSync(source)) {
+    throw new Error(`executable source missing: ${source}`)
   }
+  // A failed build/source-slot operation can leave the target of an otherwise
+  // correct symlink at mode 0600. chmod the managed source before deciding
+  // that the existing link is healthy; spawn() does not use a shell and will
+  // report that case as EACCES.
+  chmodSync(source, 0o755)
+  if (existsSync(target) || isLink(target)) {
+    if (isLink(target) && samePath(target, source) && isExecutable(target)) {
+      console.log(`[keep] ${target} -> ${source} (executable)`)
+      return
+    }
+    const backup = `${target}.combo-backup-${Date.now()}`
+    renameSync(target, backup)
+    console.warn(`[backup] replacing stale executable ${target}; preserved at ${backup}`)
+  }
+  ensureDir(dirname(target))
   try {
     symlinkSync(source, target, 'file')
   } catch {
@@ -845,8 +1302,25 @@ function runCapture(command, args, cwd, inherit, env = {}) {
 
 function isLink(path) {
   try {
-    return statSync(path).isSymbolicLink()
+    return lstatSync(path).isSymbolicLink()
   } catch {
     return false
+  }
+}
+
+function isExecutable(path) {
+  try {
+    accessSync(path, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function samePath(left, right) {
+  try {
+    return realpathSync(left) === realpathSync(right)
+  } catch {
+    return resolve(left) === resolve(right)
   }
 }

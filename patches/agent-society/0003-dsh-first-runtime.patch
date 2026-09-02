@@ -1,0 +1,2071 @@
+diff --git a/agent b/agent
+index 91a012f..b5eafd9 100755
+--- a/agent
++++ b/agent
+@@ -1,6 +1,10 @@
+ #!/bin/sh
+ set -eu
+ 
++# This wrapper is the explicit Combo source-mode entrypoint. The published
++# agent-host package never inherits this source-only behavior.
++export AGENT_RUNTIME_MODE=source
++
+ script_path=$0
+ case "$script_path" in
+     */*) ;;
+@@ -55,10 +59,8 @@ install_global_command() {
+ agent_config_path() {
+     if [ -n "${AGENT_ENV_FILE:-}" ]; then
+         printf '%s\n' "$AGENT_ENV_FILE"
+-    elif [ -n "${XDG_CONFIG_HOME:-}" ]; then
+-        printf '%s\n' "$XDG_CONFIG_HOME/agentsociety/agent.env"
+     else
+-        printf '%s\n' "${HOME}/.config/agentsociety/agent.env"
++        printf '%s\n' "${DSH_HOME:-${HOME}/.dsh}/.env"
+     fi
+ }
+ 
+@@ -107,7 +109,7 @@ case "$command" in
+     worker)
+         exec npm --prefix "$agent_host" run worker
+         ;;
+-    web|web-bridge)
++    web)
+         exec npm --prefix "$agent_host" run start -- "$command" "$@"
+         ;;
+     web-bridge)
+@@ -119,11 +121,11 @@ case "$command" in
+     dsh-doctor|sessions)
+         exec npm --prefix "$agent_host" run start -- "$command" "$@"
+         ;;
+-    register|once|observe|attach|bridge|connect|steer|follow-up|cancel|control|dsh-worker|dsh-once|dsh-dispatch|dsh-doctor)
++    update|register|once|observe|attach|bridge|connect|steer|follow-up|cancel|control|dsh-worker|dsh-once|dsh-dispatch|dsh-doctor)
+         exec npm --prefix "$agent_host" run start -- "$command" "$@"
+         ;;
+     *)
+-        echo "Usage: ./agent [setup|configure|bootstrap|repair|tui|web|web-bridge|local|worker|connect|bridge --adapter ID|doctor [--live] [--json]|dsh-doctor|sessions|register|once|observe ID|attach ID|steer|follow-up|cancel|control|dsh-worker|dsh-once|dsh-dispatch]" >&2
++        echo "Usage: ./agent [setup|configure|bootstrap|repair|update|tui|web|web-bridge|local|worker|connect|bridge --adapter ID|doctor [--live] [--json]|dsh-doctor|sessions|register|once|observe ID|attach ID|steer|follow-up|cancel|control|dsh-worker|dsh-once|dsh-dispatch]" >&2
+         exit 2
+         ;;
+ esac
+diff --git a/agent-config/LICENSE b/agent-config/LICENSE
+new file mode 100644
+index 0000000..e12d900
+--- /dev/null
++++ b/agent-config/LICENSE
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2026 Fantasia-Infinity
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/agent-config/package.json b/agent-config/package.json
+new file mode 100644
+index 0000000..c3d26f5
+--- /dev/null
++++ b/agent-config/package.json
+@@ -0,0 +1,42 @@
++{
++  "name": "@agent-society/agent-config",
++  "version": "0.1.0",
++  "description": "Shared AgentSociety configuration and credential resolution for dsh profiles and agent-host",
++  "license": "MIT",
++  "publishConfig": {
++    "access": "public"
++  },
++  "repository": {
++    "type": "git",
++    "url": "https://github.com/Fantasia-Infinity/AgentSociety.git",
++    "directory": "agent-config"
++  },
++  "type": "module",
++  "main": "lib/index.js",
++  "types": "lib/index.d.ts",
++  "exports": {
++    ".": {
++      "types": "./lib/index.d.ts",
++      "default": "./lib/index.js"
++    }
++  },
++  "files": [
++    "lib"
++  ],
++  "engines": {
++    "node": "^22.19.0 || >=24.0.0"
++  },
++  "scripts": {
++    "build": "tsc -p tsconfig.json",
++    "check": "tsc -p tsconfig.json --noEmit",
++    "test": "npm run build && node --test test/*.test.mjs",
++    "prepack": "npm run build"
++  },
++  "optionalDependencies": {
++    "@napi-rs/keyring": "1.3.0"
++  },
++  "devDependencies": {
++    "@types/node": "^22.0.0",
++    "typescript": "^5.9.3"
++  }
++}
+diff --git a/agent-config/src/index.ts b/agent-config/src/index.ts
+new file mode 100644
+index 0000000..31dc38e
+--- /dev/null
++++ b/agent-config/src/index.ts
+@@ -0,0 +1,479 @@
++import { createRequire } from "node:module";
++import {
++  chmodSync,
++  existsSync,
++  mkdirSync,
++  readFileSync,
++  renameSync,
++  statSync,
++  writeFileSync,
++} from "node:fs";
++import { homedir, userInfo } from "node:os";
++import { dirname, join, resolve } from "node:path";
++
++export type ConfigSource = "process" | "explicit" | "dsh" | "legacy" | "none";
++export type CredentialBackend = "env" | "file" | "keychain" | "missing";
++
++export interface AgentConfigOptions {
++  dshHome?: string;
++  configPath?: string;
++  cwd?: string;
++  env?: NodeJS.ProcessEnv;
++  legacyPaths?: string[];
++}
++
++export interface AgentConfig {
++  values: Record<string, string>;
++  path?: string;
++  source: ConfigSource;
++  dshHome: string;
++  canonicalPath: string;
++  legacyPaths: string[];
++}
++
++export interface CredentialResolution {
++  value?: string;
++  backend: CredentialBackend;
++  persisted: boolean;
++  source?: string;
++  error?: string;
++}
++
++export interface CredentialOptions extends AgentConfigOptions {
++  config?: AgentConfig;
++  backend?: "auto" | CredentialBackend;
++  filePath?: string;
++  service?: string;
++  account?: string;
++  label?: string;
++  allowKeychain?: boolean;
++}
++
++export interface CredentialWriteResult {
++  backend: Exclude<CredentialBackend, "missing">;
++  persisted: boolean;
++  path?: string;
++}
++
++const require = createRequire(import.meta.url);
++const SECRET_KEY = /(?:API_KEY|PASSWORD|TOKEN|SECRET)(?:$|_)/u;
++const PROCESS_KEY = /^(?:AGENT_|DSH_|PI_|LLM_)/u;
++
++export function parseEnv(text: string): Record<string, string> {
++  const values: Record<string, string> = {};
++  for (const raw of text.split(/\r?\n/u)) {
++    const line = raw.trim();
++    if (!line || line.startsWith("#") || !line.includes("=")) continue;
++    const separator = line.indexOf("=");
++    const key = line.slice(0, separator).trim();
++    let value = line.slice(separator + 1).trim();
++    if (
++      (value.startsWith('"') && value.endsWith('"')) ||
++      (value.startsWith("'") && value.endsWith("'"))
++    ) {
++      value = value.slice(1, -1);
++    }
++    if (key) values[key] = value;
++  }
++  return values;
++}
++
++export function defaultDshHome(env: NodeJS.ProcessEnv = process.env): string {
++  return resolve(env.DSH_HOME?.trim() || join(homedir(), ".dsh"));
++}
++
++export function canonicalConfigPath(dshHome = defaultDshHome()): string {
++  return join(resolve(dshHome), ".env");
++}
++
++export function legacyConfigPaths(
++  cwd = process.cwd(),
++  env: NodeJS.ProcessEnv = process.env,
++): string[] {
++  const configHome =
++    process.platform === "win32"
++      ? env.APPDATA?.trim() || join(homedir(), "AppData", "Roaming")
++      : env.XDG_CONFIG_HOME?.trim() || join(homedir(), ".config");
++  return [
++    join(configHome, "agentsociety", "agent.env"),
++    resolve(cwd, ".private", "env", "agent.env"),
++    resolve(cwd, ".env.agent"),
++    resolve(cwd, "..", ".private", "env", "agent.env"),
++    resolve(cwd, "..", ".env.agent"),
++  ];
++}
++
++/**
++ * Load shared AgentSociety configuration without exposing secret values.
++ * File precedence is legacy < $DSH_HOME/.env < explicit file < process env.
++ */
++export function loadAgentConfig(
++  options: AgentConfigOptions = {},
++): AgentConfig {
++  const env = options.env ?? process.env;
++  const dshHome = resolve(options.dshHome?.trim() || defaultDshHome(env));
++  const canonicalPath = canonicalConfigPath(dshHome);
++  const explicitPath =
++    options.configPath?.trim() || env.AGENT_ENV_FILE?.trim() || undefined;
++  const legacy = options.legacyPaths ?? legacyConfigPaths(options.cwd, env);
++  const values: Record<string, string> = {};
++  let selectedPath: string | undefined;
++  let selectedSource: ConfigSource = "none";
++
++  for (const path of [...legacy].reverse()) {
++    mergeFile(values, path);
++    if (!selectedPath && existsSync(path)) {
++      selectedPath = path;
++      selectedSource = "legacy";
++    }
++  }
++  if (existsSync(canonicalPath)) {
++    mergeFile(values, canonicalPath);
++    selectedPath = canonicalPath;
++    selectedSource = "dsh";
++  }
++  if (explicitPath) {
++    mergeFile(values, resolve(explicitPath));
++    if (existsSync(explicitPath)) {
++      selectedPath = resolve(explicitPath);
++      selectedSource = "explicit";
++    }
++  }
++  for (const [key, value] of Object.entries(env)) {
++    if (PROCESS_KEY.test(key) && value !== undefined) values[key] = value;
++  }
++  const hasProcessConfig = Object.keys(env).some(
++    (key) => PROCESS_KEY.test(key) && env[key] !== undefined,
++  );
++  if (hasProcessConfig && selectedSource === "none") selectedSource = "process";
++  return {
++    values,
++    ...(selectedPath ? { path: selectedPath } : {}),
++    source: selectedSource,
++    dshHome,
++    canonicalPath,
++    legacyPaths: legacy,
++  };
++}
++
++export function writeAgentConfig(
++  values: Record<string, string | null | undefined>,
++  options: AgentConfigOptions & { path?: string } = {},
++): string {
++  const config = loadAgentConfig(options);
++  const path = resolve(
++    options.path ||
++      options.configPath ||
++      options.env?.AGENT_ENV_FILE ||
++      config.canonicalPath,
++  );
++  const current = existsSync(path) ? readFileSync(path, "utf8") : "";
++  const update: Record<string, string | null> = {};
++  for (const [key, value] of Object.entries(values)) {
++    if (!/^AGENT_[A-Z0-9_]+$/u.test(key)) continue;
++    if (
++      SECRET_KEY.test(key) &&
++      !key.endsWith("_CREDENTIAL_SERVICE") &&
++      !key.endsWith("_CREDENTIAL_ACCOUNT") &&
++      !key.endsWith("_KEYCHAIN_SERVICE") &&
++      !key.endsWith("_KEYCHAIN_ACCOUNT") &&
++      key !== "AGENT_CREDENTIAL_BACKEND" &&
++      key !== "AGENT_CREDENTIAL_FILE"
++    ) {
++      continue;
++    }
++    update[key] = value ?? null;
++  }
++  const next = updateEnv(current, update);
++  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
++  if (process.platform !== "win32") chmodSync(dirname(path), 0o700);
++  const temporary = path + "." + process.pid + ".tmp";
++  writeFileSync(temporary, next, { encoding: "utf8", mode: 0o600 });
++  if (process.platform !== "win32") chmodSync(temporary, 0o600);
++  renameSync(temporary, path);
++  if (process.platform !== "win32") chmodSync(path, 0o600);
++  return path;
++}
++
++export function resolveCredential(
++  name: string,
++  options: CredentialOptions = {},
++): CredentialResolution {
++  const config = options.config ?? loadAgentConfig(options);
++  const env = options.env ?? process.env;
++  const direct = env[name]?.trim();
++  if (direct) {
++    return {
++      value: direct,
++      backend: "env",
++      persisted: false,
++      source: "process",
++    };
++  }
++  const filePath =
++    options.filePath ||
++    config.values.AGENT_CREDENTIAL_FILE?.trim() ||
++    env.AGENT_CREDENTIAL_FILE?.trim();
++  if (filePath) {
++    try {
++      const value = readCredentialFile(resolve(filePath), name);
++      if (value) {
++        return {
++          value,
++          backend: "file",
++          persisted: true,
++          source: resolve(filePath),
++        };
++      }
++    } catch (error) {
++      return {
++        backend: "file",
++        persisted: false,
++        source: resolve(filePath),
++        error: errorMessage(error),
++      };
++    }
++  }
++  const mergedValue = config.values[name]?.trim();
++  if (mergedValue) {
++    return {
++      value: mergedValue,
++      backend: "file",
++      persisted: true,
++      ...(config.path ? { source: config.path } : {}),
++    };
++  }
++  const backend =
++    options.backend ??
++    config.values.AGENT_CREDENTIAL_BACKEND ??
++    "auto";
++  if (
++    backend !== "env" &&
++    backend !== "file" &&
++    options.allowKeychain !== false
++  ) {
++    const reference = credentialReference(name, config, options);
++    if (reference) {
++      try {
++        const value = readKeychain(reference.service, reference.account);
++        if (value) {
++          return {
++            value,
++            backend: "keychain",
++            persisted: true,
++            source: reference.service,
++          };
++        }
++      } catch (error) {
++        return {
++          backend: "keychain",
++          persisted: false,
++          source: reference.service,
++          error: errorMessage(error),
++        };
++      }
++    }
++  }
++  return { backend: "missing", persisted: false };
++}
++
++export function writeCredential(
++  name: string,
++  value: string,
++  options: CredentialOptions = {},
++): CredentialWriteResult {
++  if (!/^[A-Z][A-Z0-9_]*$/u.test(name)) {
++    throw new Error("Invalid credential name");
++  }
++  if (!value || /\r|\n/u.test(value)) {
++    throw new Error("Credential value is invalid");
++  }
++  const config = options.config ?? loadAgentConfig(options);
++  const backend =
++    options.backend ??
++    config.values.AGENT_CREDENTIAL_BACKEND ??
++    (config.values.AGENT_CREDENTIAL_FILE ? "file" : "auto");
++  if (backend === "env") {
++    process.env[name] = value;
++    return { backend: "env", persisted: false };
++  }
++  const filePath =
++    options.filePath ||
++    config.values.AGENT_CREDENTIAL_FILE?.trim() ||
++    join(config.dshHome, "credentials.env");
++  if (backend === "file") {
++    writeCredentialFile(resolve(filePath), name, value);
++    return { backend: "file", persisted: true, path: resolve(filePath) };
++  }
++  const reference = credentialReference(name, config, options);
++  if (reference) {
++    try {
++      writeKeychain(reference.service, reference.account, value);
++      return { backend: "keychain", persisted: true };
++    } catch (error) {
++      if (backend === "keychain") throw error;
++    }
++  }
++  process.env[name] = value;
++  return { backend: "env", persisted: false };
++}
++
++export function describeConfig(
++  config: AgentConfig = loadAgentConfig(),
++): Record<string, unknown> {
++  const credentialFile =
++    config.values.AGENT_CREDENTIAL_FILE?.trim() || undefined;
++  const backend =
++    config.values.AGENT_CREDENTIAL_BACKEND ||
++    (credentialFile ? "file" : "auto");
++  return {
++    dshHome: config.dshHome,
++    canonicalPath: config.canonicalPath,
++    effectivePath: config.path,
++    source: config.source,
++    legacyPaths: config.legacyPaths,
++    credentialBackend: backend,
++    credentialFile,
++    credentialPersisted: backend === "file" || backend === "keychain",
++    configured: Boolean(
++      config.values.AGENT_DSH_MODEL ||
++        config.values.AGENT_REMOTE_MODEL ||
++        config.values.LLM_MODEL ||
++        config.values.PI_MODEL,
++    ),
++  };
++}
++
++function mergeFile(values: Record<string, string>, path: string): void {
++  if (!existsSync(path)) return;
++  Object.assign(values, parseEnv(readFileSync(path, "utf8")));
++}
++
++function updateEnv(
++  text: string,
++  update: Record<string, string | null>,
++): string {
++  const seen = new Set<string>();
++  const lines = text ? text.split(/\r?\n/u) : [];
++  const next = lines.map((line) => {
++    const match = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=/u);
++    if (!match) return line;
++    const key = match[1];
++    if (!key) return line;
++    if (!(key in update)) return line;
++    seen.add(key);
++    const value = update[key];
++    if (value === undefined) return line;
++    // Preserve an explicit empty tombstone so the canonical DSH_HOME layer
++    // can mask a value that remains in a legacy project file.
++    return value === null ? key + "=\"\"" : key + "=" + dotenvValue(value);
++  });
++  for (const [key, value] of Object.entries(update)) {
++    if (seen.has(key)) continue;
++    if (next.at(-1)?.trim()) next.push("");
++    next.push(key + "=" + (value === null ? '""' : dotenvValue(value)));
++  }
++  return next.join("\n").replace(/\n+$/u, "") + "\n";
++}
++
++function readCredentialFile(path: string, key: string): string | undefined {
++  if (!existsSync(path)) return undefined;
++  assertPrivateFile(path);
++  return parseEnv(readFileSync(path, "utf8"))[key]?.trim() || undefined;
++}
++
++function writeCredentialFile(path: string, key: string, value: string): void {
++  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
++  if (process.platform !== "win32") chmodSync(dirname(path), 0o700);
++  const current = existsSync(path) ? readFileSync(path, "utf8") : "";
++  const next = updateEnv(current, { [key]: value });
++  const temporary = path + "." + process.pid + ".tmp";
++  writeFileSync(temporary, next, { encoding: "utf8", mode: 0o600 });
++  if (process.platform !== "win32") chmodSync(temporary, 0o600);
++  renameSync(temporary, path);
++  if (process.platform !== "win32") chmodSync(path, 0o600);
++}
++
++function assertPrivateFile(path: string): void {
++  if (process.platform === "win32") return;
++  const mode = statSync(path).mode & 0o777;
++  if (mode !== 0o600) throw new Error(path + " must have permissions 0600");
++}
++
++interface CredentialReference {
++  service: string;
++  account: string;
++}
++
++function credentialReference(
++  name: string,
++  config: AgentConfig,
++  options: CredentialOptions,
++): CredentialReference | undefined {
++  const configuredService =
++    options.service ||
++    config.values[name + "_CREDENTIAL_SERVICE"] ||
++    config.values[name + "_KEYCHAIN_SERVICE"];
++  const configuredAccount =
++    options.account ||
++    config.values[name + "_CREDENTIAL_ACCOUNT"] ||
++    config.values[name + "_KEYCHAIN_ACCOUNT"];
++  const configuredBackend =
++    options.backend || config.values.AGENT_CREDENTIAL_BACKEND;
++  if (!configuredService && !configuredAccount && configuredBackend !== "keychain") {
++    return undefined;
++  }
++  const service =
++    configuredService ||
++    defaultService(name);
++  const account =
++    configuredAccount ||
++    config.values.AGENT_CREDENTIAL_ACCOUNT ||
++    userInfo().username;
++  return service && account ? { service, account } : undefined;
++}
++
++function defaultService(name: string): string {
++  const label = name
++    .replace(/^AGENT_/u, "")
++    .replaceAll("_", " ")
++    .toLowerCase();
++  return "AgentSociety " + label;
++}
++
++interface KeyringEntry {
++  getPassword(): string | undefined;
++  setPassword(value: string): void;
++}
++
++interface KeyringModule {
++  Entry: new (service: string, account: string) => KeyringEntry;
++}
++
++function keyringModule(): KeyringModule {
++  return require("@napi-rs/keyring") as KeyringModule;
++}
++
++function readKeychain(service: string, account: string): string | undefined {
++  const Entry = keyringModule().Entry;
++  return new Entry(service, account).getPassword()?.trim();
++}
++
++function writeKeychain(
++  service: string,
++  account: string,
++  value: string,
++): void {
++  const Entry = keyringModule().Entry;
++  new Entry(service, account).setPassword(value);
++}
++
++function dotenvValue(value: string): string {
++  if (!value.includes('"')) return '"' + value + '"';
++  if (!value.includes("'")) return "'" + value + "'";
++  throw new Error("Values cannot contain both quote styles");
++}
++
++function errorMessage(error: unknown): string {
++  return error instanceof Error ? error.message : String(error);
++}
+diff --git a/agent-config/test/config.test.mjs b/agent-config/test/config.test.mjs
+new file mode 100644
+index 0000000..26d9b0b
+--- /dev/null
++++ b/agent-config/test/config.test.mjs
+@@ -0,0 +1,76 @@
++import assert from "node:assert/strict";
++import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import test from "node:test";
++
++import {
++  canonicalConfigPath,
++  describeConfig,
++  loadAgentConfig,
++  parseEnv,
++  resolveCredential,
++  writeAgentConfig,
++  writeCredential,
++} from "../lib/index.js";
++
++test("configuration precedence is legacy, dsh, explicit, process", async () => {
++  const dir = await mkdtemp(join(tmpdir(), "agent-config-"));
++  const dshHome = join(dir, "dsh");
++  const legacy = join(dir, "legacy.env");
++  const explicit = join(dir, "explicit.env");
++  await writeFile(legacy, "AGENT_WORKSPACE_ROOT=/legacy\nAGENT_DSH_MODEL=legacy\n");
++  await writeAgentConfig({ AGENT_DSH_MODEL: "dsh" }, { dshHome });
++  await writeFile(explicit, "AGENT_DSH_MODEL=explicit\n");
++  const config = loadAgentConfig({
++    dshHome,
++    legacyPaths: [legacy],
++    configPath: explicit,
++    env: { DSH_HOME: dshHome, AGENT_DSH_MODEL: "process" },
++  });
++  assert.equal(config.values.AGENT_DSH_MODEL, "process");
++  assert.equal(config.values.AGENT_WORKSPACE_ROOT, "/legacy");
++  assert.equal(config.source, "explicit");
++});
++
++test("writeAgentConfig excludes secret values and file credentials are 0600", async () => {
++  const dir = await mkdtemp(join(tmpdir(), "agent-config-"));
++  const dshHome = join(dir, "dsh");
++  const configPath = join(dshHome, ".env");
++  writeAgentConfig(
++    {
++      AGENT_WORKSPACE_ROOT: "/tmp/workspace",
++      AGENT_REMOTE_API_KEY: "must-not-be-written",
++      AGENT_CREDENTIAL_BACKEND: "file",
++      AGENT_CREDENTIAL_FILE: join(dir, "credentials.env"),
++    },
++    { path: configPath, dshHome },
++  );
++  const text = await readFile(configPath, "utf8");
++  assert.match(text, /AGENT_WORKSPACE_ROOT/);
++  assert.doesNotMatch(text, /must-not-be-written/);
++  const written = writeCredential("AGENT_REMOTE_API_KEY", "secret", {
++    backend: "file",
++    filePath: join(dir, "credentials.env"),
++    dshHome,
++  });
++  assert.equal(written.backend, "file");
++  assert.equal((await stat(join(dir, "credentials.env"))).mode & 0o777, 0o600);
++  assert.equal(
++    resolveCredential("AGENT_REMOTE_API_KEY", {
++      backend: "file",
++      filePath: join(dir, "credentials.env"),
++      dshHome,
++    }).value,
++    "secret",
++  );
++  assert.equal(
++    describeConfig(loadAgentConfig({ dshHome })).credentialBackend,
++    "file",
++  );
++  assert.equal(canonicalConfigPath(dshHome), configPath);
++});
++
++test("parseEnv handles quoted values", () => {
++  assert.deepEqual(parseEnv('A="b c"\n# comment\n'), { A: "b c" });
++});
+diff --git a/agent-config/tsconfig.json b/agent-config/tsconfig.json
+new file mode 100644
+index 0000000..8c5f46e
+--- /dev/null
++++ b/agent-config/tsconfig.json
+@@ -0,0 +1,17 @@
++{
++  "compilerOptions": {
++    "target": "ES2023",
++    "module": "NodeNext",
++    "moduleResolution": "NodeNext",
++    "rootDir": "src",
++    "outDir": "lib",
++    "strict": true,
++    "noUncheckedIndexedAccess": true,
++    "exactOptionalPropertyTypes": true,
++    "skipLibCheck": true,
++    "declaration": true,
++    "sourceMap": true,
++    "types": ["node"]
++  },
++  "include": ["src/**/*.ts"]
++}
+diff --git a/agent-host/LICENSE b/agent-host/LICENSE
+new file mode 100644
+index 0000000..e12d900
+--- /dev/null
++++ b/agent-host/LICENSE
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2026 Fantasia-Infinity
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/agent-host/package.json b/agent-host/package.json
+index ec9e426..1eeffc2 100644
+--- a/agent-host/package.json
++++ b/agent-host/package.json
+@@ -1,9 +1,28 @@
+ {
+   "name": "@agent-society/agent-host",
+   "version": "0.1.2",
+-  "private": true,
+   "type": "module",
+-  "description": "AgentSociety local-first Pi host with optional Hub collaboration",
++  "description": "Optional thin AgentSociety management host for dsh",
++  "license": "MIT",
++  "publishConfig": {
++    "access": "public"
++  },
++  "repository": {
++    "type": "git",
++    "url": "https://github.com/Fantasia-Infinity/AgentSociety.git",
++    "directory": "agent-host"
++  },
++  "bin": {
++    "agent": "dist/src/cli.js"
++  },
++  "files": [
++    "dist",
++    "scripts",
++    "config",
++    "adapters",
++    "dsh",
++    "LICENSE"
++  ],
+   "engines": {
+     "node": ">=22.19.0"
+   },
+@@ -15,6 +34,7 @@
+     "apply-security-patches": "node scripts/patch-pi-brace-expansion.mjs",
+     "security-check": "node scripts/patch-pi-brace-expansion.mjs --check",
+     "test": "npm run build && node --test dist/test/*.test.js",
++    "prepack": "npm run build",
+     "start": "node dist/src/cli.js",
+     "interactive": "node dist/src/cli.js interactive",
+     "tui": "node dist/src/cli.js tui",
+@@ -31,6 +51,7 @@
+     "dsh-doctor": "node dist/src/cli.js dsh-doctor"
+   },
+   "dependencies": {
++    "@agent-society/agent-config": "^0.1.0",
+     "@earendil-works/pi-coding-agent": "0.84.0",
+     "@napi-rs/keyring": "1.3.0",
+     "brace-expansion": "5.0.9",
+@@ -38,6 +59,14 @@
+     "pi-mcp-adapter": "2.18.0",
+     "typebox": "1.3.7"
+   },
++  "peerDependencies": {
++    "@deepseek-ai/dsh": "0.1.2-alpha.2"
++  },
++  "peerDependenciesMeta": {
++    "@deepseek-ai/dsh": {
++      "optional": true
++    }
++  },
+   "devDependencies": {
+     "@types/node": "24.10.1",
+     "typescript": "5.9.3"
+diff --git a/agent-host/scripts/setup.mjs b/agent-host/scripts/setup.mjs
+index 5a7b36d..94f00c5 100755
+--- a/agent-host/scripts/setup.mjs
++++ b/agent-host/scripts/setup.mjs
+@@ -20,6 +20,9 @@ import { Writable } from "node:stream";
+ const agentHostDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+ const repositoryRoot = resolve(agentHostDir, "..");
+ const args = parseArguments(process.argv.slice(2));
++const dshHome = resolve(
++  process.env.DSH_HOME?.trim() || join(homedir(), ".dsh"),
++);
+ const configPath = resolve(
+   args.config ||
+     process.env.AGENT_SETUP_CONFIG_PATH ||
+@@ -27,8 +30,11 @@ const configPath = resolve(
+     defaultAgentConfigPath(),
+ );
+ const legacyConfigPaths = [
++  oldCentralConfigPath(),
+   resolve(repositoryRoot, ".private", "env", "agent.env"),
+   resolve(repositoryRoot, ".env.agent"),
++  resolve(process.cwd(), ".private", "env", "agent.env"),
++  resolve(process.cwd(), ".env.agent"),
+ ];
+ const completionMarker = resolve(agentHostDir, ".setup-complete");
+ 
+@@ -176,6 +182,10 @@ Options:
+ }
+ 
+ function defaultAgentConfigPath() {
++  return join(dshHome, ".env");
++}
++
++function oldCentralConfigPath() {
+   const configHome =
+     process.platform === "win32"
+       ? process.env.APPDATA?.trim() || join(homedir(), "AppData", "Roaming")
+@@ -230,12 +240,26 @@ async function collectValues(existingValues, credentials, workspaceRoot) {
+       process.env.LLM_BASE_URL?.trim() ||
+       existingValues.AGENT_REMOTE_BASE_URL ||
+       existingValues.LLM_BASE_URL ||
++      (existingValues.AGENT_DSH_PROVIDER ||
++      existingValues.AGENT_SOCIETY_PROVIDER ||
++      existingValues.AGENT_DSH_MODEL ||
++      existingValues.AGENT_SOCIETY_MODEL ||
++      process.env.AGENT_DSH_PROVIDER?.trim() ||
++      process.env.AGENT_DSH_MODEL?.trim() ||
++      process.env.DSH_PROVIDER?.trim() ||
++      process.env.DSH_MODEL?.trim()
++        ? "https://api.deepseek.com"
++        : "") ||
+       "";
+     const existingRemoteModel =
+       process.env.AGENT_REMOTE_MODEL?.trim() ||
+       process.env.LLM_MODEL?.trim() ||
+       existingValues.AGENT_REMOTE_MODEL ||
+       existingValues.LLM_MODEL ||
++      process.env.AGENT_DSH_MODEL?.trim() ||
++      process.env.DSH_MODEL?.trim() ||
++      existingValues.AGENT_DSH_MODEL ||
++      existingValues.AGENT_SOCIETY_MODEL ||
+       "";
+     const existingPiProvider =
+       process.env.PI_PROVIDER?.trim() || existingValues.PI_PROVIDER || "";
+@@ -265,6 +289,8 @@ async function collectValues(existingValues, credentials, workspaceRoot) {
+         );
+         values.AGENT_REMOTE_BASE_URL = model.baseUrl;
+         values.AGENT_REMOTE_MODEL = model.model;
++        values.AGENT_DSH_PROVIDER = model.dshProvider;
++        values.AGENT_DSH_MODEL = model.model;
+         values.PI_PROVIDER = null;
+         values.PI_MODEL = null;
+ 
+@@ -550,7 +576,11 @@ async function collectModelValues(
+         "No complete existing model configuration was found; choose custom or deepseek.",
+       );
+     }
+-    return { baseUrl: existingBase, model: existingModel };
++    return {
++      baseUrl: existingBase,
++      model: existingModel,
++      dshProvider: "deepseek-official",
++    };
+   }
+   const defaultBase =
+     provider === "deepseek" ? "https://api.deepseek.com" : existingBase;
+@@ -571,7 +601,11 @@ async function collectModelValues(
+   rejectUnsupportedEnvCharacters("Model URL", baseUrl);
+   rejectUnsupportedEnvCharacters("Model ID", model);
+   validateUrl(baseUrl, "Model URL");
+-  return { baseUrl, model };
++  return {
++    baseUrl,
++    model,
++    dshProvider: "deepseek-official",
++  };
+ }
+ 
+ async function selectPermission(existingValues, terminal, interactive) {
+@@ -999,8 +1033,26 @@ function parseEnv(text) {
+ }
+ 
+ function writeConfig(original, values, path) {
+-  const lines = original.split(/\r?\n/u);
+-  const remaining = new Map(Object.entries(values));
++  const updates = new Map();
++  for (const [key, value] of Object.entries(values)) {
++    if (value === null && isSecretConfigKey(key)) continue;
++    // Do not fill a fresh local config with dozens of empty Hub tombstones.
++    // A tombstone is needed only when the key exists in the file being
++    // rewritten or in a lower-precedence legacy file that the canonical file
++    // must mask.
++    if (value === null && !hasConfigKey(original, key) && !legacyHasConfigKey(key, path)) {
++      continue;
++    }
++    updates.set(key, value);
++  }
++  const lines = original
++    .split(/\r?\n/u)
++    .filter((line) => {
++      const match = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=/u);
++      if (!match) return true;
++      return !isSecretConfigKey(match[1]);
++    });
++  const remaining = updates;
+   const next = lines
+     .map((line) => {
+       const match = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=/u);
+@@ -1008,13 +1060,16 @@ function writeConfig(original, values, path) {
+       const key = match[1];
+       const value = remaining.get(key);
+       remaining.delete(key);
+-      return value === null ? null : `${key}=${dotenvValue(value)}`;
++      // Empty values are intentional tombstones: a new canonical
++      // $DSH_HOME/.env must be able to mask a removed Hub/model setting that
++      // still exists in a readable legacy file below it.
++      return value === null ? `${key}=""` : `${key}=${dotenvValue(value)}`;
+     })
+     .filter((line) => line !== null);
+   if (remaining.size) {
+     if (next.at(-1)?.trim()) next.push("");
+     for (const [key, value] of remaining) {
+-      if (value !== null) next.push(`${key}=${dotenvValue(value)}`);
++      next.push(`${key}=${value === null ? '""' : dotenvValue(value)}`);
+     }
+   }
+   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+@@ -1029,6 +1084,41 @@ function writeConfig(original, values, path) {
+   chmodSync(path, 0o600);
+ }
+ 
++function hasConfigKey(text, key) {
++  return text.split(/\r?\n/u).some((line) =>
++    line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=/u)?.[1] === key,
++  );
++}
++
++function legacyHasConfigKey(key, targetPath) {
++  // An explicitly selected config is an isolated user override. Do not let a
++  // checkout-local legacy file add empty Hub rows to a fresh test/CI config;
++  // callers that want migration should omit --config and let setup discover
++  // the legacy source explicitly.
++  if (args.explicitConfig) return false;
++  const target = resolve(targetPath);
++  return legacyConfigPaths.some((candidate) => {
++    if (resolve(candidate) === target || !existsSync(candidate)) return false;
++    try {
++      return hasConfigKey(readFileSync(candidate, "utf8"), key);
++    } catch {
++      return false;
++    }
++  });
++}
++
++function isSecretConfigKey(key) {
++  return (
++    key === "LLM_API_KEY" ||
++    (key.startsWith("AGENT_") &&
++      /(API_KEY|PASSWORD|TOKEN|SECRET)(?:$|_)/u.test(key) &&
++      !key.endsWith("_CREDENTIAL_SERVICE") &&
++      !key.endsWith("_CREDENTIAL_ACCOUNT") &&
++      !key.endsWith("_KEYCHAIN_SERVICE") &&
++      !key.endsWith("_KEYCHAIN_ACCOUNT"))
++  );
++}
++
+ function dotenvValue(value) {
+   if (!value.includes('"')) return `"${value}"`;
+   if (!value.includes("'")) return `'${value}'`;
+diff --git a/agent-host/src/builtin-resources.ts b/agent-host/src/builtin-resources.ts
+index 9ccd968..084b47a 100644
+--- a/agent-host/src/builtin-resources.ts
++++ b/agent-host/src/builtin-resources.ts
+@@ -65,6 +65,12 @@ function ensureChannelMcpDefaults(diagnostics: string[]): void {
+   if (isRecord(current) && !isManagedChannelEntry(current)) return;
+ 
+   const repositoryRoot = findRepositoryRoot();
++  if (!repositoryRoot) {
++    diagnostics.push(
++      "Skipped managed Channel MCP defaults: published agent-host has no source checkout",
++    );
++    return;
++  }
+   const srcRoot = join(repositoryRoot, "src");
+   const httpUrl = (
+     process.env.AGENT_CHANNEL_HTTP_URL?.trim() || "http://127.0.0.1:8742"
+@@ -161,7 +167,7 @@ function isManagedChannelEntry(value: Record<string, unknown>): boolean {
+   return value.env.AGENT_SOCIETY_MANAGED_MCP === MANAGED_CHANNEL_MARKER;
+ }
+ 
+-function findRepositoryRoot(): string {
++function findRepositoryRoot(): string | undefined {
+   let cursor = dirname(fileURLToPath(import.meta.url));
+   for (let depth = 0; depth < 8; depth += 1) {
+     if (
+@@ -174,7 +180,7 @@ function findRepositoryRoot(): string {
+     if (parent === cursor) break;
+     cursor = parent;
+   }
+-  throw new Error("Could not locate the AgentSociety repository root");
++  return undefined;
+ }
+ 
+ function writePrivateJson(path: string, value: unknown): void {
+diff --git a/agent-host/src/cli.ts b/agent-host/src/cli.ts
+index 4bf8c9e..b0fc767 100644
+--- a/agent-host/src/cli.ts
++++ b/agent-host/src/cli.ts
+@@ -12,6 +12,7 @@ import {
+   writeFileSync,
+ } from "node:fs";
+ import { createRequire } from "node:module";
++import { spawnSync } from "node:child_process";
+ import { fileURLToPath, pathToFileURL } from "node:url";
+ import { createInterface } from "node:readline/promises";
+ import { stdin, stdout } from "node:process";
+@@ -64,6 +65,14 @@ async function main(): Promise<void> {
+     "..",
+     "..",
+   );
++  if (["setup", "configure", "bootstrap", "repair"].includes(command)) {
++    runManagementScript(agentHostDir, process.argv.slice(3));
++    return;
++  }
++  if (command === "update") {
++    runPublishedUpdate();
++    return;
++  }
+   applyPendingUpdate(agentHostDir);
+   if (command === "local") process.env.AGENT_HUB_RUNTIME_DISABLED = "1";
+   if (command === "sessions") {
+@@ -121,7 +130,12 @@ async function main(): Promise<void> {
+     : config;
+   let hub: HubClient | undefined;
+   let hubResolutionError: unknown;
+-  if (config.hubEnabled && !hubRuntimeDisabled) {
++  const doctorNeedsLiveHub = command === "doctor" && doctorOptions?.live === true;
++  if (
++    config.hubEnabled &&
++    !hubRuntimeDisabled &&
++    (command !== "doctor" || doctorNeedsLiveHub)
++  ) {
+     try {
+       hub = await resolveHubClient(
+         workerConfig,
+@@ -319,8 +333,8 @@ async function main(): Promise<void> {
+       if (started) return;
+       console.warn(
+         "DeepSeek Harness TUI is unavailable; falling back to the Pi TUI. " +
+-          "Run scripts/install-dsh-plugin.sh and keep the dsh-TUI checkout at " +
+-          resolve(repositoryRoot, "..", "dsh-TUI") + ".",
++          "Use `dsh web`, or explicitly enable source TUI mode with " +
++          "AGENT_RUNTIME_MODE=source and a dsh-TUI checkout.",
+       );
+     }
+     await runInteractive(config, hub);
+@@ -442,9 +456,14 @@ async function runDshTui(
+   }
+   if (runtime === "pi") return false;
+   const forced = runtime === "dsh";
+-  // Prefer the combo-managed install when present (sources/dsh-tui sits next
+-  // to sources/deepseek-harness, so the sibling DSH_CHECKOUT inference below
+-  // resolves correctly); fall back to the standalone sibling checkout.
++  const explicitTuiRoot = process.env.AGENT_DSH_TUI_ROOT?.trim();
++  const explicitDshCheckout = process.env.DSH_CHECKOUT?.trim();
++  const sourceMode =
++    process.env.AGENT_RUNTIME_MODE?.trim() === "source" ||
++    Boolean(explicitTuiRoot || explicitDshCheckout);
++  // Published agent-host must not discover or consume an unrelated combo/TUI
++  // checkout. The source wrapper opts in with AGENT_RUNTIME_MODE;
++  // AGENT_DSH_TUI_ROOT/DSH_CHECKOUT are explicit source-mode overrides.
+   const managedTui = resolve(
+     homedir(),
+     ".local",
+@@ -454,14 +473,16 @@ async function runDshTui(
+     "dsh-tui",
+   );
+   const tuiRoot =
+-    process.env.AGENT_DSH_TUI_ROOT?.trim() ||
+-    (existsSync(resolve(managedTui, "scripts", "run.ts"))
++    explicitTuiRoot ||
++    (sourceMode && existsSync(resolve(managedTui, "scripts", "run.ts"))
+       ? managedTui
+-      : resolve(repositoryRoot, "..", "dsh-TUI"));
+-  const runScript = resolve(tuiRoot, "scripts", "run.ts");
++      : sourceMode
++        ? resolve(repositoryRoot, "..", "dsh-TUI")
++        : "");
++  const runScript = tuiRoot ? resolve(tuiRoot, "scripts", "run.ts") : "";
+   const checkout =
+-    process.env.DSH_CHECKOUT?.trim() ||
+-    resolve(tuiRoot, "..", "deepseek-harness");
++    explicitDshCheckout ||
++    (sourceMode && tuiRoot ? resolve(tuiRoot, "..", "deepseek-harness") : "");
+   const dshHome =
+     process.env.DSH_HOME?.trim() || resolve(homedir(), ".dsh");
+   const pluginPatch = resolve(
+@@ -471,6 +492,9 @@ async function runDshTui(
+     "cordis.patch.yml",
+   );
+   const missing: string[] = [];
++  if (!sourceMode) {
++    missing.push("source TUI mode is not enabled");
++  }
+   if (!existsSync(runScript)) {
+     missing.push(`dsh-TUI source launcher (${runScript})`);
+   }
+@@ -608,7 +632,7 @@ async function advertiseDshWeb(
+     await hub.updateNodeWeb(config.nodeId, {
+       enabled: true,
+       protocol_version: "1",
+-      profile: config.dshWebProfile ?? "agent-society-web",
++      profile: config.dshWebProfile ?? "web",
+       capabilities: ["session.read"],
+     });
+     console.log(
+@@ -763,7 +787,11 @@ function startDshWebChild(
+ ) {
+   const dshHome =
+     process.env.DSH_HOME?.trim() || resolve(homedir(), ".dsh");
+-  const profile = "agent-society-web";
++  const profile =
++    process.env.AGENT_DSH_WEB_PROFILE?.trim() ||
++    (existsSync(resolve(dshHome, "profiles", "agent-society-web", "package.json"))
++      ? "agent-society-web"
++      : "web");
+   const profilePackage = resolve(dshHome, "profiles", profile, "package.json");
+   const profileReady = profileIncludesCorePlugin(profilePackage);
+   const legacyPatch = resolve(
+@@ -773,9 +801,17 @@ function startDshWebChild(
+     "dsh",
+     "agent-society.dsh.yml",
+   );
++  if (!profileReady && !existsSync(legacyPatch)) {
++    throw new Error(
++      `dsh Web profile "${profile}" is not installed. Run ` +
++        `dsh plugin --profile ${profile} add @agent-society/dsh-agent-society`,
++    );
++  }
+   const port = new URL(target).port || "3080";
+   const command = profileReady
+-    ? [...dshCommandForSpawn(config), "--profile", profile, "--port", port]
++    ? profile === "web"
++      ? [...dshCommandForSpawn(config), "web", "--port", port]
++      : [...dshCommandForSpawn(config), "--profile", profile, "--port", port]
+     : [
+         ...dshCommandForSpawn(config),
+         "web",
+@@ -816,7 +852,7 @@ async function runDshWeb(
+       await hub.updateNodeWeb(config.nodeId, {
+         enabled: true,
+         protocol_version: "1",
+-        profile: config.dshWebProfile ?? "agent-society-web",
++        profile: config.dshWebProfile ?? "web",
+         capabilities: ["session.read"],
+       });
+       console.log(
+@@ -830,7 +866,11 @@ async function runDshWeb(
+   }
+   const dshHome =
+     process.env.DSH_HOME?.trim() || resolve(homedir(), ".dsh");
+-  const profile = "agent-society-web";
++  const profile =
++    process.env.AGENT_DSH_WEB_PROFILE?.trim() ||
++    (existsSync(resolve(dshHome, "profiles", "agent-society-web", "package.json"))
++      ? "agent-society-web"
++      : "web");
+   const profilePackage = resolve(
+     dshHome,
+     "profiles",
+@@ -845,9 +885,17 @@ async function runDshWeb(
+     "dsh",
+     "agent-society.dsh.yml",
+   );
++  if (!profileReady && !existsSync(legacyPatch)) {
++    throw new Error(
++      `dsh Web profile "${profile}" is not installed. Run ` +
++        `dsh plugin --profile ${profile} add @agent-society/dsh-agent-society`,
++    );
++  }
+   const webArgs = process.argv.slice(3);
+   const command = profileReady
+-    ? [...dshCommandForSpawn(config), "--profile", profile, ...webArgs]
++    ? profile === "web"
++      ? [...dshCommandForSpawn(config), "web", ...webArgs]
++      : [...dshCommandForSpawn(config), "--profile", profile, ...webArgs]
+     : [...dshCommandForSpawn(config), "web", "--patch", legacyPatch, ...webArgs];
+   if (!profileReady) {
+     console.warn(
+@@ -1013,6 +1061,136 @@ function hostCapabilities(
+   ];
+ }
+ 
++function runManagementScript(agentHostDir: string, args: string[]): void {
++  const script = resolve(agentHostDir, "scripts", "setup.mjs");
++  if (!existsSync(script)) {
++    throw new Error("AgentSociety setup script is not present in this package");
++  }
++  const result = spawnSync(process.execPath, [script, ...args], {
++    cwd: agentHostDir,
++    env: process.env,
++    stdio: "inherit",
++    windowsHide: true,
++  });
++  if (result.error) throw result.error;
++  if (result.status !== 0) process.exitCode = result.status ?? 1;
++}
++
++function runPublishedUpdate(): void {
++  const packageManager = process.env.AGENT_PACKAGE_MANAGER?.trim() || "npm";
++  if (!["npm", "pnpm"].includes(packageManager)) {
++    throw new Error("AGENT_PACKAGE_MANAGER must be npm or pnpm");
++  }
++  const dshPackage =
++    process.env.AGENT_DSH_PACKAGE?.trim() || "@deepseek-ai/dsh";
++  const dshSpec =
++    process.env.AGENT_DSH_PACKAGE_SPEC?.trim() ||
++    dshPackage + "@" + (process.env.AGENT_DSH_VERSION?.trim() || "0.1.2-alpha.2");
++  const hostSpec =
++    process.env.AGENT_HOST_PACKAGE?.trim() || "@agent-society/agent-host";
++  const installArgs =
++    packageManager === "pnpm"
++      ? ["add", "--global", dshSpec, hostSpec]
++      : ["install", "--global", dshSpec, hostSpec];
++  runPackageCommand(packageManager, installArgs);
++
++  const dsh = resolveManagementDsh();
++  const plugin =
++    process.env.AGENT_DSH_PLUGIN_PACKAGE?.trim() ||
++    "@agent-society/dsh-agent-society";
++  for (const profile of ["web", "headless", "agent-society-worker"]) {
++    const updated = spawnSync(
++      dsh[0]!,
++      [...dsh.slice(1), "plugin", "--profile", profile, "update", plugin],
++      { cwd: process.cwd(), env: process.env, stdio: "inherit", windowsHide: true },
++    );
++    if (updated.status !== 0) {
++      console.warn(
++        "dsh profile " +
++          profile +
++          " has no existing plugin entry; trying add instead",
++      );
++      runManagementDsh(["plugin", "--profile", profile, "add", plugin]);
++    }
++  }
++  console.log("dsh, agent-host, and installed AgentSociety profiles are up to date.");
++}
++
++function runPackageCommand(command: string, args: string[]): void {
++  const result = spawnSync(command, args, {
++    cwd: process.cwd(),
++    env: process.env,
++    stdio: "inherit",
++    windowsHide: true,
++  });
++  if (result.error) throw result.error;
++  if (result.status !== 0) {
++    throw new Error(command + " exited with status " + (result.status ?? "unknown"));
++  }
++}
++
++function runManagementDsh(args: string[]): void {
++  const dsh = resolveManagementDsh();
++  const result = spawnSync(dsh[0]!, [...dsh.slice(1), ...args], {
++    cwd: process.cwd(),
++    env: process.env,
++    stdio: "inherit",
++    windowsHide: true,
++  });
++  if (result.error) throw result.error;
++  if (result.status !== 0) {
++    throw new Error("dsh exited with status " + (result.status ?? "unknown"));
++  }
++}
++
++function resolveManagementDsh(): string[] {
++  const configured = process.env.AGENT_DSH_COMMAND?.trim() || "dsh";
++  const parts = configured.startsWith("[")
++    ? parseCommandArray(configured)
++    : [configured];
++  const executable = parts[0];
++  if (!executable) throw new Error("AGENT_DSH_COMMAND is empty");
++  const found = executable.includes("/")
++    ? executable
++    : (process.env.PATH || "")
++        .split(process.platform === "win32" ? ";" : ":")
++        .map((entry) => (entry ? resolve(entry, executable) : ""))
++        .find((candidate) => candidate && existsSync(candidate)) || executable;
++  if (process.platform === "win32") return [found, ...parts.slice(1)];
++  try {
++    accessSync(found, constants.X_OK);
++    return [found, ...parts.slice(1)];
++  } catch {
++    try {
++      const target = realpathSync(found);
++      if (target.endsWith(".js")) {
++        console.warn(
++          "dsh launcher " + found + " is not executable; using Node fallback",
++        );
++        return [process.execPath, target, ...parts.slice(1)];
++      }
++    } catch {
++      // Keep the original command so the operating system reports the cause.
++    }
++    return [found, ...parts.slice(1)];
++  }
++}
++
++function parseCommandArray(value: string): string[] {
++  try {
++    const parsed: unknown = JSON.parse(value);
++    if (
++      Array.isArray(parsed) &&
++      parsed.every((item): item is string => typeof item === "string")
++    ) {
++      return parsed;
++    }
++  } catch {
++    // Fall through to the simple command form.
++  }
++  return [value];
++}
++
+ function dshCommandForSpawn(config: AgentHostConfig): string[] {
+   const command = [...(config.dshCommand ?? ["dsh"])]
+   const executable = command[0]
+@@ -1091,7 +1269,7 @@ async function resolveNodeCredential(
+                   enabled: true,
+                   protocol_version: "1",
+                   profile:
+-                    config.dshWebProfile ?? "agent-society-web",
++                    config.dshWebProfile ?? "web",
+                   capabilities: ["session.read"],
+                 },
+               }
+diff --git a/agent-host/src/config.ts b/agent-host/src/config.ts
+index 0f14097..27b1f7a 100644
+--- a/agent-host/src/config.ts
++++ b/agent-host/src/config.ts
+@@ -2,6 +2,13 @@ import { existsSync, readFileSync } from "node:fs";
+ import { homedir, hostname, userInfo } from "node:os";
+ import { join, resolve } from "node:path";
+ 
++import {
++  canonicalConfigPath,
++  defaultDshHome,
++  legacyConfigPaths,
++  loadAgentConfig,
++  resolveCredential as resolveSharedCredential,
++} from "@agent-society/agent-config";
+ import {
+   readCredentialEnv,
+   readLegacyMacKeychainCredential,
+@@ -97,15 +104,19 @@ export interface AgentHostConfig {
+   dshSessionCompression?: "none" | "zstd";
+   /** Advertise an opt-in DSH Web capability to the Hub. Default off; set AGENT_HUB_DSH_WEB=1 to enable. */
+   dshWebEnabled?: boolean;
+-  /** dsh profile name advertised for the web bridge, default "agent-society-web". */
++  /** dsh profile name advertised for the web bridge, default "web". */
+   dshWebProfile?: string;
+ }
+ 
+ export function loadProjectEnv(path?: string): string | undefined {
+-  const envPath = path ? resolve(path) : discoverProjectEnv();
+-  if (envPath && existsSync(envPath)) {
+-    loadEnvFile(envPath);
++  const loaded = loadAgentConfig({
++    ...(path ? { configPath: path } : {}),
++    cwd: process.cwd(),
++  });
++  for (const [key, value] of Object.entries(loaded.values)) {
++    if (process.env[key] === undefined) process.env[key] = value;
+   }
++  const envPath = loaded.path;
+   const credentialFile = process.env.AGENT_CREDENTIAL_FILE?.trim();
+   if (credentialFile) {
+     try {
+@@ -123,29 +134,33 @@ export function loadProjectEnv(path?: string): string | undefined {
+ }
+ 
+ export function discoverProjectEnv(cwd = process.cwd()): string | undefined {
+-  return firstExisting([
+-    defaultAgentConfigPath(),
+-    resolve(cwd, ".private/env/agent.env"),
++  // This compatibility helper answers the historical question "which file
++  // belongs to this checkout?". Keep project-local legacy files ahead of the
++  // user's canonical $DSH_HOME/.env; the latter still wins when composing
++  // effective values through loadAgentConfig(), but must not hide a checkout's
++  // .env.agent from callers that need to identify its migration source.
++  const projectCandidates = [
++    resolve(cwd, ".private", "env", "agent.env"),
+     resolve(cwd, ".env.agent"),
+-    resolve(cwd, "../.private/env/agent.env"),
+-    resolve(cwd, "../.env.agent"),
++    resolve(cwd, "..", ".private", "env", "agent.env"),
++    resolve(cwd, "..", ".env.agent"),
+     resolve(cwd, ".env"),
+-    resolve(cwd, "../.env"),
+-  ]);
++    resolve(cwd, "..", ".env"),
++  ];
++  return firstExisting(projectCandidates) ?? loadAgentConfig({ cwd }).path;
+ }
+ 
+ /** User-level configuration path shared by setup, connect, worker and doctor. */
+ export function defaultAgentConfigPath(): string {
+-  const configHome =
+-    process.platform === "win32"
+-      ? process.env.APPDATA?.trim() || join(homedir(), "AppData", "Roaming")
+-      : process.env.XDG_CONFIG_HOME?.trim() || join(homedir(), ".config");
+-  return resolve(configHome, "agentsociety", "agent.env");
++  return canonicalConfigPath(defaultDshHome());
+ }
+ 
+ /** Legacy project paths are still readable and are never removed automatically. */
+ export function legacyAgentConfigPaths(root: string): string[] {
+-  return [resolve(root, ".private/env/agent.env"), resolve(root, ".env.agent")];
++  return [
++    ...legacyConfigPaths(root),
++    resolve(root, ".env"),
++  ];
+ }
+ 
+ /**
+@@ -549,7 +564,7 @@ export function loadConfig(
+     dshWebSearch: process.env.AGENT_DSH_WEB_SEARCH !== "0",
+     dshWebEnabled: process.env.AGENT_HUB_DSH_WEB === "1",
+     dshWebProfile:
+-      process.env.AGENT_HUB_DSH_WEB_PROFILE?.trim() || "agent-society-web",
++      process.env.AGENT_HUB_DSH_WEB_PROFILE?.trim() || "web",
+   };
+ }
+ 
+@@ -563,6 +578,26 @@ function configuredCredential(
+ ): string | undefined {
+   const backend = process.env.AGENT_CREDENTIAL_BACKEND?.trim();
+   if (backend === "env" || backend === "file") return undefined;
++  const sharedName =
++    label === "Hub"
++      ? "AGENT_HUB_TOKEN"
++      : label === "Hub password"
++        ? "AGENT_HUB_PASSWORD"
++        : label === "Hub node credential"
++          ? "AGENT_HUB_NODE_TOKEN"
++          : label === "remote model"
++            ? "AGENT_REMOTE_API_KEY"
++            : undefined;
++  if (sharedName) {
++    const serviceName = service || legacyService;
++    const accountName = account || legacyAccount;
++    const shared = resolveSharedCredential(sharedName, {
++      ...(serviceName ? { service: serviceName } : {}),
++      ...(accountName ? { account: accountName } : {}),
++      allowKeychain: !allowUnavailable,
++    });
++    if (shared.value) return shared.value;
++  }
+   try {
+     if (service || account) return readSystemCredential(service, account, label);
+     return readLegacyMacKeychainCredential(legacyService, legacyAccount, label);
+diff --git a/agent-host/src/dsh-env.ts b/agent-host/src/dsh-env.ts
+index 9cb2b56..178f93e 100644
+--- a/agent-host/src/dsh-env.ts
++++ b/agent-host/src/dsh-env.ts
+@@ -8,6 +8,8 @@
+  */
+ 
+ import { sanitizedChildEnv } from "./child-env.js";
++import { existsSync } from "node:fs";
++import { join } from "node:path";
+ import type { AgentHostConfig } from "./config.js";
+ import type { HubClient } from "./hub-client.js";
+ 
+@@ -79,6 +81,9 @@ export function buildDshWorkerEnv(
+   repositoryRoot: string,
+ ): NodeJS.ProcessEnv {
+   const model = config.dshModel ?? config.remoteModel ?? "deepseek-v4-flash";
++  const sourceCheckout =
++    existsSync(join(repositoryRoot, ".git")) &&
++    existsSync(join(repositoryRoot, "agent-host", "package.json"));
+   return {
+     ...buildDshCommonEnv(config, hub, {
+       worker: true,
+@@ -89,6 +94,7 @@ export function buildDshWorkerEnv(
+     AGENT_SOCIETY_SESSION_MODE: config.workerSessionMode,
+     AGENT_SOCIETY_TOOL_POLICY: config.remoteToolPolicy,
+     AGENT_SOCIETY_REPOSITORY_ROOT: repositoryRoot,
++    ...(sourceCheckout ? { AGENT_RUNTIME_MODE: "source" } : {}),
+     AGENT_SELF_UPDATE: config.selfUpdateEnabled === false ? "0" : "1",
+     AGENT_SOCIETY_POLL_SECONDS: String(config.pollSeconds),
+     AGENT_SOCIETY_LEASE_SECONDS: String(config.leaseSeconds),
+diff --git a/agent-host/src/host.ts b/agent-host/src/host.ts
+index e033124..134f634 100644
+--- a/agent-host/src/host.ts
++++ b/agent-host/src/host.ts
+@@ -11,7 +11,7 @@ export function nodeWebMetadata(
+   return {
+     enabled: true,
+     protocol_version: "1",
+-    profile: config.dshWebProfile ?? "agent-society-web",
++    profile: config.dshWebProfile ?? "web",
+     capabilities: ["session.read"],
+   };
+ }
+diff --git a/agent-host/test/worker.test.ts b/agent-host/test/worker.test.ts
+index e8694e3..e2be7d7 100644
+--- a/agent-host/test/worker.test.ts
++++ b/agent-host/test/worker.test.ts
+@@ -685,19 +685,19 @@ test("agent-specific environment takes precedence over the legacy project env",
+   assert.equal(discoverProjectEnv(host), join(repository, ".env"));
+ });
+ 
+-test("central AgentSociety configuration path follows the platform config home", () => {
+-  const configHome = temporaryDirectory();
+-  const previous = process.env.XDG_CONFIG_HOME;
+-  process.env.XDG_CONFIG_HOME = configHome;
++test("central AgentSociety configuration path follows DSH_HOME", () => {
++  const dshHome = temporaryDirectory();
++  const previous = process.env.DSH_HOME;
++  process.env.DSH_HOME = dshHome;
+   try {
+     assert.equal(
+       defaultAgentConfigPath(),
+-      join(configHome, "agentsociety", "agent.env"),
++      join(dshHome, ".env"),
+     );
+     assert.equal(agentEnvPath(temporaryDirectory()), defaultAgentConfigPath());
+   } finally {
+-    if (previous === undefined) delete process.env.XDG_CONFIG_HOME;
+-    else process.env.XDG_CONFIG_HOME = previous;
++    if (previous === undefined) delete process.env.DSH_HOME;
++    else process.env.DSH_HOME = previous;
+   }
+ });
+ 
+@@ -993,6 +993,11 @@ test("static doctor does not execute a model request", () => {
+         AGENT_ENV_FILE: configPath,
+         AGENT_SESSION_DIR: join(workspace, "sessions"),
+         DSH_HOME: join(workspace, "dsh"),
++        AGENT_HUB_URL: "https://hub.test.invalid",
++        AGENT_HUB_USERNAME: "doctor-user",
++        AGENT_HUB_PASSWORD: "doctor-password",
++        AGENT_HUB_NODE_TOKEN: "",
++        AGENT_HUB_TOKEN: "",
+       },
+       encoding: "utf8",
+     },
+diff --git a/agent.ps1 b/agent.ps1
+index 481f627..fe1dd96 100644
+--- a/agent.ps1
++++ b/agent.ps1
+@@ -1,5 +1,8 @@
+ $ErrorActionPreference = "Stop"
+ 
++# This wrapper is the explicit Combo source-mode entrypoint.
++$env:AGENT_RUNTIME_MODE = "source"
++
+ $RepositoryRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+ $AgentHost = Join-Path $RepositoryRoot "agent-host"
+ $Command = if ($args.Count -gt 0) { $args[0] } else { "tui" }
+@@ -22,9 +25,8 @@ $Entrypoint = Join-Path $AgentHost "dist/src/cli.js"
+ 
+ function Get-AgentConfigPath {
+     if ($env:AGENT_ENV_FILE) { return $env:AGENT_ENV_FILE }
+-    if ($env:XDG_CONFIG_HOME) { return Join-Path $env:XDG_CONFIG_HOME "agentsociety\agent.env" }
+-    if ($env:APPDATA) { return Join-Path $env:APPDATA "AgentSociety\agent.env" }
+-    return Join-Path $HOME ".config\agentsociety\agent.env"
++    $DshHome = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $HOME ".dsh" }
++    return Join-Path $DshHome ".env"
+ }
+ 
+ function Test-AgentConfig {
+@@ -69,12 +71,13 @@ switch ($Command) {
+     { $_ -in "web", "web-bridge" } { & $NpmCommand --prefix $AgentHost run start -- $Command @Rest; break }
+     "doctor" { & node $Entrypoint "doctor" @Rest; break }
+     { $_ -in "sessions", "dsh-doctor" } { & $NpmCommand --prefix $AgentHost run start -- $Command @Rest; break }
++    "update" { & $NpmCommand --prefix $AgentHost run start -- $Command @Rest; break }
+     { $_ -in "register", "once", "observe", "attach", "bridge", "connect", "dsh-worker", "dsh-once", "dsh-dispatch" } {
+         & $NpmCommand --prefix $AgentHost run start -- $Command @Rest
+         break
+     }
+     default {
+-        throw "Usage: .\agent.ps1 [setup|configure|bootstrap|repair|tui|web|web-bridge|local|worker|connect|bridge --adapter ID|doctor [--live] [--json]|dsh-doctor|sessions|register|once|observe ID|attach ID|steer|follow-up|cancel|control|dsh-worker|dsh-once|dsh-dispatch]"
++        throw "Usage: .\agent.ps1 [setup|configure|bootstrap|repair|update|tui|web|web-bridge|local|worker|connect|bridge --adapter ID|doctor [--live] [--json]|dsh-doctor|sessions|register|once|observe ID|attach ID|steer|follow-up|cancel|control|dsh-worker|dsh-once|dsh-dispatch]"
+     }
+ }
+ exit $LASTEXITCODE
+diff --git a/dsh-plugin/LICENSE b/dsh-plugin/LICENSE
+new file mode 100644
+index 0000000..e12d900
+--- /dev/null
++++ b/dsh-plugin/LICENSE
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2026 Fantasia-Infinity
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+diff --git a/dsh-plugin/cordis.patch.yml b/dsh-plugin/cordis.patch.yml
+index f5fd44d..5e030fe 100644
+--- a/dsh-plugin/cordis.patch.yml
++++ b/dsh-plugin/cordis.patch.yml
+@@ -1,17 +1,23 @@
+ # AgentSociety dsh bundle.
+ #
+-# Worker row: enabled with AGENT_SOCIETY_WORKER=1. TUI/web profiles without
+-# that flag load only the Hub MCP tools below.
++# Worker row: enabled only when the dsh launcher selects the dedicated
++# agent-society-worker profile. The profile fact is launch-scoped; it never
++# requires AGENT_SOCIETY_WORKER=1 in the global $DSH_HOME/.env.
+ - insert:
++    # Load the shared $DSH_HOME/.env and resolve credentials before all
++    # AgentSociety rows inspect process.env.
++    - id: agent-society-config
++      name: '@agent-society/dsh-agent-society/config'
++
+     - id: agent-society-worker
+       name: '@agent-society/dsh-agent-society/worker'
+-      disabled: !!js process.env.AGENT_SOCIETY_WORKER !== '1'
++      disabled: !!js process.env.DSH_PROFILE !== 'agent-society-worker'
+       config:
+         hubUrl: !!js process.env.AGENT_SOCIETY_HUB_URL
+         hubTokenEnv: 'AGENT_SOCIETY_HUB_TOKEN'
+         pollSeconds: !!js Number(process.env.AGENT_SOCIETY_POLL_SECONDS ?? 20)
+         leaseSeconds: !!js Number(process.env.AGENT_SOCIETY_LEASE_SECONDS ?? 300)
+-        workspaceRoot: !!js process.env.AGENT_SOCIETY_WORKSPACE_ROOT ?? process.cwd()
++        workspaceRoot: !!js process.env.AGENT_SOCIETY_WORKSPACE_ROOT ?? process.env.AGENT_WORKSPACE_ROOT ?? process.env.HOME ?? process.cwd()
+         sessionMode: !!js process.env.AGENT_SOCIETY_SESSION_MODE ?? 'continuous'
+         toolPolicy: !!js process.env.AGENT_SOCIETY_TOOL_POLICY ?? 'full'
+         selfUpdateEnabled: !!js process.env.AGENT_SELF_UPDATE !== '0'
+@@ -21,7 +27,7 @@
+         principalId: !!js process.env.AGENT_SOCIETY_PRINCIPAL_ID
+         displayName: !!js process.env.AGENT_SOCIETY_DISPLAY_NAME
+         provider: !!js process.env.AGENT_SOCIETY_PROVIDER ?? 'deepseek-official'
+-        model: !!js process.env.DSH_MODEL ?? process.env.AGENT_SOCIETY_MODEL ?? 'deepseek-v4-flash'
++        model: !!js process.env.AGENT_SOCIETY_MODEL ?? process.env.DSH_MODEL ?? process.env.AGENT_REMOTE_MODEL ?? 'deepseek-v4-flash'
+         maxTokens: !!js Number(process.env.AGENT_SOCIETY_MAX_TOKENS ?? 8192)
+         # Consensus digests into the Hub shared memory (default off).
+         # Consensus digests into the Hub shared memory (AGENT_SOCIETY_CONTEXT=0 disables).
+diff --git a/dsh-plugin/package.json b/dsh-plugin/package.json
+index fd504ee..f5d03d9 100644
+--- a/dsh-plugin/package.json
++++ b/dsh-plugin/package.json
+@@ -3,6 +3,14 @@
+   "version": "0.2.0",
+   "description": "AgentSociety Hub worker and dispatch tools as a DeepSeek Harness bundle",
+   "license": "MIT",
++  "publishConfig": {
++    "access": "public"
++  },
++  "repository": {
++    "type": "git",
++    "url": "https://github.com/Fantasia-Infinity/AgentSociety.git",
++    "directory": "dsh-plugin"
++  },
+   "type": "module",
+   "main": "lib/index.js",
+   "types": "lib/index.d.ts",
+@@ -19,6 +27,10 @@
+       "types": "./lib/worker-plugin.d.ts",
+       "default": "./lib/worker-plugin.js"
+     },
++    "./config": {
++      "types": "./lib/config-plugin.d.ts",
++      "default": "./lib/config-plugin.js"
++    },
+     "./hub-tool-guard": {
+       "types": "./lib/hub-tool-guard.d.ts",
+       "default": "./lib/hub-tool-guard.js"
+@@ -56,21 +68,32 @@
+   "scripts": {
+     "build": "tsc -p tsconfig.json",
+     "check": "tsc -p tsconfig.json --noEmit",
+-    "test": "npm run build && node --test test/*.test.mjs"
++    "test": "npm run build && node --test test/*.test.mjs",
++    "prepack": "npm run build"
+   },
+   "peerDependencies": {
++    "@agent-society/agent-config": "^0.1.0",
++    "@deepseek-ai/dsh": "0.1.2-alpha.2",
+     "@deepseek-ai/cordis": "^4.0.2",
+     "@deepseek-ai/cordis-plugin-timer": "^1.1.4",
+     "@deepseek-ai/dsh-agent": "^0.1.2-alpha.2",
+     "@deepseek-ai/dsh-llm": "^0.1.2-alpha.2",
+     "@deepseek-ai/dsh-sandbox-policy": "^0.1.2-alpha.2",
+     "@deepseek-ai/dsh-session": "^0.1.2-alpha.2",
++    "@deepseek-ai/dsh-mcp-client": "^0.1.2-alpha.2",
+     "@deepseek-ai/dsh-session-persistence": "^0.1.2-alpha.2",
+     "@deepseek-ai/dsh-system-prompt": "^0.1.2-alpha.2",
+-    "@deepseek-ai/dsh-mcp-client": "^0.1.2-alpha.2",
+     "@deepseek-ai/dsh-scope": "^0.1.2-alpha.2",
+     "@deepseek-ai/schemastery": "^3.18.2"
+   },
++  "peerDependenciesMeta": {
++    "@deepseek-ai/dsh": {
++      "optional": true
++    }
++  },
++  "dependencies": {
++    "@agent-society/agent-config": "^0.1.0"
++  },
+   "devDependencies": {
+     "@deepseek-ai/cordis": "4.0.2",
+     "@deepseek-ai/cordis-plugin-timer": "1.1.4",
+diff --git a/dsh-plugin/src/config-plugin.ts b/dsh-plugin/src/config-plugin.ts
+new file mode 100644
+index 0000000..bc9f230
+--- /dev/null
++++ b/dsh-plugin/src/config-plugin.ts
+@@ -0,0 +1,111 @@
++import type { Context } from "@deepseek-ai/cordis";
++import {
++  loadAgentConfig,
++  resolveCredential,
++} from "@agent-society/agent-config";
++
++export const name = "agent-society-config";
++export const inject: string[] = [];
++
++const NON_SECRET_KEYS = [
++  "AGENT_HUB_URL",
++  "AGENT_HUB_USERNAME",
++  "AGENT_HUB_RECEIVE_DISABLED",
++  "AGENT_HUB_DSH_WEB",
++  "AGENT_CREDENTIAL_BACKEND",
++  "AGENT_CREDENTIAL_FILE",
++  "AGENT_PRINCIPAL_ID",
++  "AGENT_PRINCIPAL_NAME",
++  "AGENT_ACTOR_ID",
++  "AGENT_ACTOR_NAME",
++  "AGENT_NODE_ID",
++  "AGENT_NODE_NAME",
++  "AGENT_WORKSPACE_ROOT",
++  "AGENT_REMOTE_BASE_URL",
++  "AGENT_REMOTE_TOOL_POLICY",
++  "AGENT_DSH_PERMISSION_MODE",
++  "AGENT_DSH_MODEL",
++  "AGENT_DSH_PROVIDER",
++  "AGENT_REMOTE_MODEL",
++  "AGENT_SOCIETY_PROVIDER",
++  "AGENT_SOCIETY_MODEL",
++  "AGENT_SOCIETY_TOOL_POLICY",
++  "AGENT_SOCIETY_WEB_PROFILE",
++  "AGENT_SOCIETY_DIRECTORY",
++  "AGENT_SOCIETY_QUESTIONS",
++  "AGENT_SOCIETY_CONTEXT",
++  "AGENT_SOCIETY_SESSION_MODE",
++  "AGENT_SOCIETY_POLL_SECONDS",
++  "AGENT_SOCIETY_LEASE_SECONDS",
++];
++
++const CREDENTIAL_KEYS = [
++  "AGENT_REMOTE_API_KEY",
++  "AGENT_HUB_TOKEN",
++  "AGENT_HUB_PASSWORD",
++  "AGENT_HUB_NODE_TOKEN",
++];
++
++export function apply(ctx: Context): void {
++  const config = loadAgentConfig({ cwd: process.cwd() });
++  for (const key of NON_SECRET_KEYS) {
++    const value = config.values[key]?.trim();
++    if (value && process.env[key] === undefined) process.env[key] = value;
++  }
++  for (const key of CREDENTIAL_KEYS) {
++    if (process.env[key]?.trim()) continue;
++    const resolved = resolveCredential(key, { config });
++    if (resolved.value) process.env[key] = resolved.value;
++    if (resolved.error) {
++      ctx.logger.warn(
++        "agent-society-config: " +
++          key +
++          " credential unavailable (" +
++          resolved.error +
++          ")",
++      );
++    }
++  }
++  // The native dsh DeepSeek adapter owns these names. The shared AgentSociety
++  // credential/config namespace is resolved first so direct `dsh web` and
++  // Host-launched dsh children receive the same model configuration without
++  // persisting a secret in `$DSH_HOME/.env`.
++  if (!process.env.DEEPSEEK_API_KEY && process.env.AGENT_REMOTE_API_KEY) {
++    process.env.DEEPSEEK_API_KEY = process.env.AGENT_REMOTE_API_KEY;
++  }
++  copy("AGENT_REMOTE_BASE_URL", "DEEPSEEK_BASE_URL");
++  copy("AGENT_HUB_URL", "AGENT_SOCIETY_HUB_URL");
++  copy("AGENT_WORKSPACE_ROOT", "AGENT_SOCIETY_WORKSPACE_ROOT");
++  copy("AGENT_ACTOR_ID", "AGENT_SOCIETY_ACTOR_ID");
++  copy("AGENT_NODE_ID", "AGENT_SOCIETY_NODE_ID");
++  copy("AGENT_PRINCIPAL_ID", "AGENT_SOCIETY_PRINCIPAL_ID");
++  copy("AGENT_PRINCIPAL_NAME", "AGENT_SOCIETY_DISPLAY_NAME");
++  if (!process.env.AGENT_SOCIETY_MODEL) {
++    copy("AGENT_DSH_MODEL", "AGENT_SOCIETY_MODEL");
++    copy("AGENT_REMOTE_MODEL", "AGENT_SOCIETY_MODEL");
++  }
++  if (!process.env.AGENT_SOCIETY_PROVIDER) {
++    copy("AGENT_DSH_PROVIDER", "AGENT_SOCIETY_PROVIDER");
++  }
++  if (!process.env.AGENT_SOCIETY_TOOL_POLICY) {
++    const policy = process.env.AGENT_REMOTE_TOOL_POLICY;
++    if (policy === "read_only") process.env.AGENT_SOCIETY_TOOL_POLICY = "read_only";
++    else if (policy === "no_tools") process.env.AGENT_SOCIETY_TOOL_POLICY = "no_tools";
++    else if (policy === "full") process.env.AGENT_SOCIETY_TOOL_POLICY = "full";
++  }
++  if (!process.env.AGENT_SOCIETY_HUB_TOKEN) {
++    process.env.AGENT_SOCIETY_HUB_TOKEN =
++      process.env.AGENT_HUB_NODE_TOKEN?.trim() ||
++      process.env.AGENT_HUB_TOKEN?.trim() ||
++      "";
++  }
++  if (!process.env.AGENT_SOCIETY_HUB_URL) {
++    process.env.AGENT_SOCIETY_HUB_URL = "";
++  }
++}
++
++function copy(source: string, target: string): void {
++  if (process.env[target] === undefined && process.env[source]?.trim()) {
++    process.env[target] = process.env[source]!.trim();
++  }
++}
+diff --git a/dsh-plugin/src/index.ts b/dsh-plugin/src/index.ts
+index ef2c13f..031e3ee 100644
+--- a/dsh-plugin/src/index.ts
++++ b/dsh-plugin/src/index.ts
+@@ -1,3 +1,4 @@
+ export { apply, Config, inject, name } from './worker-plugin.js'
+ export type { Config as WorkerConfig, ToolPolicy } from './worker-plugin.js'
++export { apply as applyConfig, inject as configInject, name as configName } from './config-plugin.js'
+ export { apply as applyWebToolGuard, inject as injectWebToolGuard, name as webToolGuardName } from './web-tool-guard.js'
+diff --git a/dsh-plugin/src/self-update.ts b/dsh-plugin/src/self-update.ts
+index e408d7c..875d234 100644
+--- a/dsh-plugin/src/self-update.ts
++++ b/dsh-plugin/src/self-update.ts
+@@ -11,9 +11,12 @@
+ import { spawn, spawnSync } from 'node:child_process'
+ import { createHash } from 'node:crypto'
+ import {
++  accessSync,
++  constants,
+   existsSync,
+   readFileSync,
+   readdirSync,
++  realpathSync,
+   statSync,
+ } from 'node:fs'
+ import { dirname, resolve } from 'node:path'
+@@ -60,8 +63,17 @@ export async function runPluginSelfUpdate(
+   const repositoryRoot = options.repositoryRoot
+   const pluginDir = resolve(repositoryRoot, 'dsh-plugin')
+   const agentHostDir = resolve(repositoryRoot, 'agent-host')
+-  if (!existsSync(resolve(repositoryRoot, '.git')) && !existsSync(resolve(repositoryRoot, 'agent-host', 'package.json'))) {
+-    throw new Error(`Self-update repository root not found: ${repositoryRoot}`)
++  const sourceCheckout =
++    existsSync(resolve(repositoryRoot, '.git')) &&
++    existsSync(resolve(repositoryRoot, 'agent-host', 'package.json'))
++  const sourceMode = process.env.AGENT_RUNTIME_MODE?.trim() === 'source'
++  if (!sourceMode) {
++    return runPublishedSelfUpdate(options.nodePath, record)
++  }
++  if (!sourceCheckout) {
++    throw new Error(
++      `Source self-update requested, but no AgentSociety checkout was found at ${repositoryRoot}`,
++    )
+   }
+   const branch = selfUpdateBranch(task)
+   const npm = resolveNpm(options.nodePath)
+@@ -130,6 +142,137 @@ export async function runPluginSelfUpdate(
+   }
+ }
+ 
++async function runPublishedSelfUpdate(
++  nodePath: string,
++  record: (label: string, output: string) => void,
++): Promise<PluginSelfUpdateReport> {
++  const npm = resolveNpm(nodePath)
++  const dshPackage =
++    process.env.AGENT_DSH_PACKAGE?.trim() || "@deepseek-ai/dsh"
++  const dshSpec =
++    process.env.AGENT_DSH_PACKAGE_SPEC?.trim() ||
++    dshPackage + "@" + (process.env.AGENT_DSH_VERSION?.trim() || "0.1.2-alpha.2")
++  const hostSpec =
++    process.env.AGENT_HOST_PACKAGE_SPEC?.trim() ||
++    process.env.AGENT_HOST_PACKAGE?.trim() ||
++    "@agent-society/agent-host@latest"
++  const pluginSpec =
++    process.env.AGENT_DSH_PLUGIN_PACKAGE_SPEC?.trim() ||
++    '@agent-society/dsh-agent-society@latest'
++  const updateHost = shouldUpdateHost()
++  const packages = [dshSpec, pluginSpec]
++  if (updateHost) packages.push(hostSpec)
++  await runNpm(
++    npm,
++    process.cwd(),
++    ['install', '--global', ...packages],
++    'npm update',
++    record,
++  )
++  const dsh = resolveDshInvocation(nodePath)
++  const profileSteps: string[] = []
++  for (const profile of ['web', 'headless', 'agent-society-worker']) {
++    try {
++      await run(
++        process.cwd(),
++        dsh.command,
++        [...dsh.args, 'plugin', '--profile', profile, 'update', pluginSpec],
++        `Update dsh ${profile} profile`,
++        record,
++      )
++      profileSteps.push(`${profile}: updated`)
++    } catch (error) {
++      // `update` intentionally fails when an older installation has not yet
++      // created the profile entry. In that case add the same published plugin
++      // so a remote self-update repairs old Combo installs as well.
++      record(
++        `Update dsh ${profile} profile`,
++        error instanceof Error ? error.message : String(error),
++      )
++      await run(
++        process.cwd(),
++        dsh.command,
++        [...dsh.args, 'plugin', '--profile', profile, 'add', pluginSpec],
++        `Add dsh ${profile} profile`,
++        record,
++      )
++      profileSteps.push(`${profile}: added`)
++    }
++  }
++  return {
++    ok: true,
++    updated: true,
++    needsRestart: true,
++    steps: [
++      'Published dsh/AgentSociety packages updated',
++      ...(updateHost ? ['Published agent-host package updated'] : []),
++      ...profileSteps,
++    ],
++  }
++}
++
++function shouldUpdateHost(): boolean {
++  if (process.env.AGENT_UPDATE_HOST?.trim() === '0') return false
++  if (process.env.AGENT_UPDATE_HOST?.trim() === '1') return true
++  const command = process.platform === 'win32' ? 'where.exe' : 'which'
++  const probe = spawnSync(command, ['agent'], { encoding: 'utf8' })
++  return probe.status === 0 && Boolean(probe.stdout?.trim())
++}
++
++interface DshInvocation {
++  command: string
++  args: string[]
++}
++
++function resolveDshInvocation(nodePath: string): DshInvocation {
++  const configured = process.env.AGENT_DSH_COMMAND?.trim() || 'dsh'
++  const parts = configured.startsWith('[')
++    ? parseCommandArray(configured)
++    : [configured]
++  const first = parts[0]
++  if (!first) throw new Error('AGENT_DSH_COMMAND is empty')
++  const found = first.includes('/') || first.includes('\\')
++    ? first
++    : process.platform === 'win32'
++      ? first
++      : (spawnSync('which', [first], { encoding: 'utf8' }).stdout || '').trim() || first
++  if (process.platform === 'win32') {
++    return { command: found, args: parts.slice(1) }
++  }
++  try {
++    accessSync(found, constants.X_OK)
++    return { command: found, args: parts.slice(1) }
++  } catch {
++    try {
++      const target = realpathSync(found)
++      if (target.endsWith('.js')) {
++        return {
++          command: nodePath,
++          args: [target, ...parts.slice(1)],
++        }
++      }
++    } catch {
++      // Preserve the original command so the child error remains actionable.
++    }
++    return { command: found, args: parts.slice(1) }
++  }
++}
++
++function parseCommandArray(value: string): string[] {
++  try {
++    const parsed: unknown = JSON.parse(value)
++    if (
++      Array.isArray(parsed) &&
++      parsed.every((item): item is string => typeof item === 'string')
++    ) {
++      return parsed
++    }
++  } catch {
++    // Fall back to the single-command form below.
++  }
++  return [value]
++}
++
+ function selfUpdateBranch(task: HubTask): string {
+   const requested = task.input?.branch
+   if (typeof requested !== 'string' || requested.trim() === '') return 'main'
+diff --git a/dsh-plugin/src/worker-plugin.ts b/dsh-plugin/src/worker-plugin.ts
+index 4081ee5..670b716 100644
+--- a/dsh-plugin/src/worker-plugin.ts
++++ b/dsh-plugin/src/worker-plugin.ts
+@@ -203,7 +203,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
+   const repositoryRoot = resolve(
+     config.repositoryRoot ??
+       process.env.AGENT_SOCIETY_REPOSITORY_ROOT ??
+-      resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'),
++      process.cwd(),
+   )
+   const identity = {
+     principalId: config.principalId ?? `human-${owner}`,
+@@ -345,7 +345,7 @@ class WorkerLoop {
+                 enabled: true,
+                 protocol_version: '1',
+                 profile:
+-                  process.env.AGENT_SOCIETY_WEB_PROFILE ?? 'agent-society-web',
++                  process.env.AGENT_SOCIETY_WEB_PROFILE ?? 'web',
+                 capabilities: ['session.read'],
+               },
+             }

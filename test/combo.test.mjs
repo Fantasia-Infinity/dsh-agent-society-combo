@@ -23,8 +23,10 @@ test("source dry-run remains explicit and keeps the TUI in the locked source set
     encoding: "utf8",
   });
   assert.match(output, /deepseek-harness/u);
+  assert.match(output, /600c416d7f471ac9b54f2506702c6958e01014e2/u);
   assert.match(output, /dsh-TUI/u);
   assert.match(output, /0003-dsh-first-runtime\.patch/u);
+  assert.doesNotMatch(output, /0003-live-adoption-revision-retry\.patch/u);
 });
 
 test("doctor accepts a non-executable dsh JavaScript shim through Node fallback", async () => {

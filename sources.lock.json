@@ -2,19 +2,9 @@
   "checksums": {},
   "components": {
     "deepseek-harness": {
-      "commit": "c12ad841a4cf774792e2b32e3fa5559fea93b1a5",
-      "files": [
-        {
-          "dest": "scripts/migrate-session-projection-cache.ts",
-          "sha256": "61157000f4acb91f2f35a94907888368b9033a2b5e6689901eebbc8fb768460c",
-          "src": "patches/deepseek-harness/files/scripts/migrate-session-projection-cache.ts"
-        }
-      ],
+      "commit": "600c416d7f471ac9b54f2506702c6958e01014e2",
+      "files": [],
       "patches": [
-        {
-          "path": "patches/deepseek-harness/0003-live-adoption-revision-retry.patch",
-          "sha256": "2c61c2e450e40bb18f3cc5e86256678390c77cd346421b9730287b75cb3386a2"
-        },
         {
           "path": "patches/deepseek-harness/0004-native-web-base-path.patch",
           "sha256": "13e89dde61f06cdc4c5840edca7581b8571c61fd7d2b0010cdbaac6049077b84"
@@ -96,9 +86,9 @@
   "published": {
     "dsh": {
       "package": "@deepseek-ai/dsh",
-      "version": "0.1.2-alpha.4",
+      "version": "0.1.2-alpha.5",
       "source": "Fantasia-Infinity/deepseek-harness",
-      "commit": "c12ad841a4cf774792e2b32e3fa5559fea93b1a5"
+      "commit": "600c416d7f471ac9b54f2506702c6958e01014e2"
     },
     "agentSocietyPlugin": {
       "package": "@agent-society/dsh-agent-society",

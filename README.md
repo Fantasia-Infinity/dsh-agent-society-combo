@@ -19,13 +19,13 @@
 
 | 组件 | 固定 commit |
 |---|---|
-| deepseek-harness | `c12ad841a4cf774792e2b32e3fa5559fea93b1a5` |
+| deepseek-harness | `600c416d7f471ac9b54f2506702c6958e01014e2` |
 | dsh-TUI | `3cf843f502550b98fa03330cdb045024ab0204c8` |
 | AgentSociety | `15f6c324afc538f0f0fd18f1d02ceca6950b6825` |
 | dsh-anchored-standard | `0a38616c1b7ce4219b6d94d95c89f34a90741616` |
 | dsh-opencode-full（可选） | `f4d4dda7c2ab8032ed169a770db3594cf98ea638` |
 
-发布版运行时绑定：`@deepseek-ai/dsh@0.1.2-alpha.4`，来源为
+发布版运行时绑定：`@deepseek-ai/dsh@0.1.2-alpha.5`，来源为
 `Fantasia-Infinity/deepseek-harness`；AgentSociety 插件为
 `@agent-society/dsh-agent-society`。Combo 会检查 dsh 版本，不会让 npm 模式和
 源码模式静默使用不同的 dsh 实现。
@@ -66,7 +66,7 @@ AGENT_DSH_WEB_BRIDGE_START=0  # 禁用自动启动，要求已有 DSH Web
 先安装当前 fork 对应的 dsh 发布包：
 
 ```bash
-npm install -g @deepseek-ai/dsh@0.1.2-alpha.4
+npm install -g @deepseek-ai/dsh@0.1.2-alpha.5
 ```
 
 然后添加 AgentSociety 插件到三个彼此隔离的 profile：
@@ -232,7 +232,7 @@ bridge 会等待本地 DSH Web 就绪、注册 `dsh_web` 节点能力，并转�
 npm 模式下更新由 dsh/npm 管理，不在 `node_modules` 或安装目录执行 Git 更新：
 
 ```bash
-npm install -g @deepseek-ai/dsh@0.1.2-alpha.4 @agent-society/agent-host
+npm install -g @deepseek-ai/dsh@0.1.2-alpha.5 @agent-society/agent-host
 agent update                         # 更新 dsh、Host、三个 dsh profile 插件
 combo install --update               # 也可以只更新 AgentSociety 插件
 ```

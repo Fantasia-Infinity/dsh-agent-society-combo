@@ -3045,8 +3045,8 @@ index 6bbb83d..349b356 100644
        const url = buildLocalUrl(this.target, path);
        response = await this.fetchImpl(url, {
          method,
--        headers,
-+        headers: this.localHeaders(headers),
+-        headers: { ...headers, "accept-encoding": "identity" },
++        headers: this.localHeaders({ ...headers, "accept-encoding": "identity" }),
          ...(body !== undefined ? { body } : {}),
          signal: this.abortController.signal,
        });

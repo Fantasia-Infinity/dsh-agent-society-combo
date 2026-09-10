@@ -590,13 +590,14 @@ function removeStaleOverlays(dir, previousFiles, desiredFiles) {
 }
 
 function cloneAtCommit(repo, commit, dir, managed = false) {
+  let backup
   if (existsSync(join(dir, '.git'))) {
     const status = runCapture('git', ['status', '--porcelain'], dir, false)
     if (status.status !== 0 || status.stdout.trim() !== '') {
       if (!managed) {
         throw new Error(`${dir} is dirty; commit or remove it before updating`)
       }
-      const backup = `${dir}.pre-update-${Date.now()}`
+      backup = `${dir}.pre-update-${Date.now()}`
       console.warn(`[backup] ${dir} has local changes; preserving at ${backup}`)
       renameSync(dir, backup)
     } else {
@@ -625,6 +626,30 @@ function cloneAtCommit(repo, commit, dir, managed = false) {
     comboRoot,
   )
   runChecked('git', ['checkout', '--quiet', commit], dir)
+  restoreUserData(dir, backup)
+}
+
+/**
+ * Re-cloning a dirty managed checkout drops gitignored user data such as
+ * `sources/agent-society/.private/env/agent.env` (Hub/model credentials
+ * live there). Copy the well-known paths back from the pre-update backup.
+ */
+function restoreUserData(dir, backup) {
+  if (!backup || !existsSync(backup)) return
+  const userPaths = ['.private', '.env.agent', '.env']
+  for (const name of userPaths) {
+    const source = join(backup, name)
+    if (!existsSync(source)) continue
+    const target = join(dir, name)
+    try {
+      cpSync(source, target, { recursive: true, force: true })
+      console.log(`[restore] ${name} from ${backup}`)
+    } catch (error) {
+      console.warn(
+        `[warn] could not restore ${name} from ${backup}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
 }
 
 async function installDependencies(harness, tui, agentSociety, openCodeFull, changed) {

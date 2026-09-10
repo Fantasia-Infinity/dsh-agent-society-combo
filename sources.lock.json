@@ -51,12 +51,12 @@
       "repo": "https://github.com/Fantasia-Infinity/dsh-TUI.git"
     },
     "agent-society": {
-      "commit": "5e8c424",
+      "commit": "8754e72",
       "files": [],
       "patches": [
         {
           "path": "patches/agent-society/0001-worker-state-and-web-tunnel-hardening.patch",
-          "sha256": "60fa7a6caa56f45ff0162281086a0cafc9d2ba187e244e05b764a0368630aea1"
+          "sha256": "3edd6cf67cca83892842ca9d8d1bfed6218f2a918b2e9209d2ba93e3537d0937"
         },
         {
           "path": "patches/agent-society/0003-dsh-first-runtime.patch",

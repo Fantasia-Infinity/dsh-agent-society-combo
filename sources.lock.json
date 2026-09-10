@@ -46,7 +46,7 @@
       ],
       "repo": "https://github.com/Fantasia-Infinity/dsh-TUI.git"
     },
-      "agent-society": {
+    "agent-society": {
       "commit": "15f6c324afc538f0f0fd18f1d02ceca6950b6825",
       "files": [],
       "patches": [
@@ -70,7 +70,7 @@
       "repo": "https://github.com/Fantasia-Infinity/AgentSociety.git"
     },
     "dsh-anchored-standard": {
-      "commit": "0a38616c1b7ce4219b6d94d95c89f34a90741616",
+      "commit": "dda23ef119e3715f417d73f72eca407732846d1a",
       "files": [],
       "patches": [],
       "repo": "https://github.com/xiaobright/dsh-anchored-standard.git"

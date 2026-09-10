@@ -22,7 +22,7 @@
 | deepseek-harness | `454f46f35983783f9e74d4edf7921bcc6104febf` |
 | dsh-TUI | `9d8a38a71eb2bf7cad857485ea3c20c102067490` |
 | AgentSociety | `15f6c324afc538f0f0fd18f1d02ceca6950b6825` |
-| dsh-anchored-standard | `0a38616c1b7ce4219b6d94d95c89f34a90741616` |
+| dsh-anchored-standard | `dda23ef119e3715f417d73f72eca407732846d1a` |
 | dsh-opencode-full（可选） | `f4d4dda7c2ab8032ed169a770db3594cf98ea638` |
 
 发布版运行时绑定：`@deepseek-ai/dsh@0.1.5-rc.1`，来源为

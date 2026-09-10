@@ -1283,28 +1283,30 @@ function quoteCmd(value) {
 }
 
 function copyPreset(source, dest) {
-  const required = [
-    'agent.cordis.yml',
-    'preset.yml',
-    'tool-bootstrap.mjs',
-    'dev-tool-search.mjs',
-    'skill-search.mjs',
-    'instruction-hint.mjs',
-    'compaction-epoch.mjs',
-    'custom-bash.mjs',
-  ]
+  // The preset repo keeps its files either at the repo root or under
+  // `preset/` depending on the pinned commit. Copy the whole directory
+  // instead of a fixed file list so newly added helper scripts (e.g.
+  // context-gate.mjs) travel with the preset.
+  const sourceDir = existsSync(join(source, 'preset.yml'))
+    ? source
+    : existsSync(join(source, 'preset', 'preset.yml'))
+      ? join(source, 'preset')
+      : undefined
+  if (!sourceDir) {
+    throw new Error(`preset source not found under ${source}`)
+  }
+  const entries = readdirSync(sourceDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+  for (const required of ['agent.cordis.yml', 'preset.yml']) {
+    if (!entries.includes(required)) {
+      throw new Error(`preset file missing: ${join(sourceDir, required)}`)
+    }
+  }
   rmSync(dest, { recursive: true, force: true })
   ensureDir(dest)
-  for (const name of required) {
-    const direct = join(source, name)
-    const nested = join(source, 'preset', name)
-    const src = existsSync(direct)
-      ? direct
-      : existsSync(nested)
-        ? nested
-        : undefined
-    if (!src) throw new Error(`preset file missing: ${direct} (or ${nested})`)
-    copyFileSync(src, join(dest, name))
+  for (const name of entries) {
+    copyFileSync(join(sourceDir, name), join(dest, name))
   }
 }
 

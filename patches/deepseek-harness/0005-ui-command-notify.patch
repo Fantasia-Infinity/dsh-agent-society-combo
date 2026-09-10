@@ -1,50 +1,50 @@
 diff --git a/packages/client/ui-conversation/src/client/apply.ts b/packages/client/ui-conversation/src/client/apply.ts
-index 4c8527c1e..6847aa48d 100644
+index 9cc8f9575..447a3073b 100644
 --- a/packages/client/ui-conversation/src/client/apply.ts
 +++ b/packages/client/ui-conversation/src/client/apply.ts
-@@ -292,6 +292,7 @@ export function apply(ctx: Context): void {
+@@ -316,6 +316,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
            toggleCommandMenu: undefined,
            stop: undefined,
            command: undefined,
 +          notify: undefined,
            hooks: {
-             notices: ABSENT_NOTICES,
-             lexicon: ABSENT_LEXICON,
-@@ -347,6 +348,7 @@ export function apply(ctx: Context): void {
+             busyEnter: submissionPolicy.busyEnter,
+             fileUploads: ABSENT_FILE_UPLOADS,
+@@ -374,6 +375,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
            const result = await session.command(line)
            return result.ok && result.value.matched
          },
 +        notify: (level, text) => shell.notify(level, text),
          hooks: {
-           notices: shell.notices,
-           lexicon: shell.lexicon,
+           busyEnter: submissionPolicy.busyEnter,
+           fileUploads: conversation.fileUploads,
 diff --git a/packages/client/ui-conversation/src/client/contract/slots.ts b/packages/client/ui-conversation/src/client/contract/slots.ts
-index 5107c319b..b4e40d304 100644
+index 272d84b8e..2e9998b9c 100644
 --- a/packages/client/ui-conversation/src/client/contract/slots.ts
 +++ b/packages/client/ui-conversation/src/client/contract/slots.ts
-@@ -271,6 +271,8 @@ export interface ComposerBarInjected {
+@@ -313,6 +313,8 @@ export interface ComposerBarInjected {
    toggleCommandMenu: ((selection: EditSelection) => void) | undefined
    stop: (() => void) | undefined
    command: ((line: string) => Promise<boolean>) | undefined
 +  /** Surface detached command failures in the owning session's composer. */
 +  notify?: ((level: 'info' | 'error', text: string) => void) | undefined
    hooks: {
-     notices: ObservableSnapshot<InputNotice | null>
-     lexicon: ObservableSnapshot<ReadonlyMap<'/' | '@', readonly string[]>>
+     /**
+      * Live busy-state submission preference: the delivery mode plain Enter
 diff --git a/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx b/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
-index c223459c5..8484870c3 100644
+index 8747f7010..ce387ce2d 100644
 --- a/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
 +++ b/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
-@@ -41,7 +41,7 @@ export type InputBarProps = ComposerBarProps
- 
+@@ -43,7 +43,7 @@ export type InputBarProps = ComposerBarProps
  export const InputBar = memo(function InputBar({
-   useSession, useInput, inputActions, keyboard, addImages, removeImage, draftImages,
--  resolveSubmitMode, toggleCommandMenu, stop, command, t,
-+  resolveSubmitMode, toggleCommandMenu, stop, command, notify, t,
-   renderSlot, useNotices, useLexicon, useMenuLauncher,
+   useSession, useInput, inputActions, keyboard, addFiles, removeAttachment, resolveDraftAttachments,
+   retryFileUpload,
+-  toggleCommandMenu, stop, command, t,
++  toggleCommandMenu, stop, command, notify, t,
+   renderSlot, useBusyEnter, useFileUploads, useNotices, useLexicon, useMenuLauncher,
    useProjection, sessionId, variant, disabled: inert = false, blocked,
    workspacePickerOpen = false, onRequestWorkspace,
-@@ -330,7 +330,7 @@ export const InputBar = memo(function InputBar({
+@@ -369,7 +369,7 @@ export const InputBar = memo(function InputBar({
    // or while the command face is absent with the session).
    const accessSelect: ReactNode = command === undefined
      ? null
@@ -88,10 +88,10 @@ index b54049efe..aa968fd00 100644
  
    const choose = (id: string): void => {
 diff --git a/packages/client/ui-conversation/tests/input-bar.client.spec.tsx b/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
-index 0edc8b9ef..87ee5263b 100644
+index 78d53353c..c44d8583b 100644
 --- a/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
 +++ b/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
-@@ -81,6 +81,7 @@ interface BenchOptions {
+@@ -83,6 +83,7 @@ interface BenchOptions {
    placeholder?: string
    t?: InputBarProps['t']
    command?: (line: string) => Promise<boolean>
@@ -99,7 +99,7 @@ index 0edc8b9ef..87ee5263b 100644
    accessory?: React.ReactNode
    overlay?: React.ReactNode
    leftItems?: React.ReactNode
-@@ -191,6 +192,7 @@ function bench(over?: BenchOptions) {
+@@ -197,6 +198,7 @@ function bench(over?: BenchOptions) {
      useMenuLauncher: bindSnapshotSelector(menuLauncher),
      stop,
      command: over?.command ?? (() => Promise.resolve(true)),
@@ -107,7 +107,7 @@ index 0edc8b9ef..87ee5263b 100644
      // Mirrors the real lookup chain (conversation namespace, then common).
      t: over?.t ?? makeTranslate(zh, commonZh),
      renderSlot,
-@@ -1372,6 +1374,24 @@ describe('command launcher chrome and control seats', () => {
+@@ -1392,6 +1394,24 @@ describe('command launcher chrome and control seats', () => {
        .toEqual(['Review Only', 'Project Files', 'Operator Mode', 'Custom Mode', '__proto__'])
    })
  

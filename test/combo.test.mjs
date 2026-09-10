@@ -23,9 +23,15 @@ test("source dry-run remains explicit and keeps the TUI in the locked source set
     encoding: "utf8",
   });
   assert.match(output, /deepseek-harness/u);
-  assert.match(output, /600c416d7f471ac9b54f2506702c6958e01014e2/u);
+  assert.match(output, /454f46f35983783f9e74d4edf7921bcc6104febf/u);
   assert.match(output, /dsh-TUI/u);
+  assert.match(output, /9d8a38a71eb2bf7cad857485ea3c20c102067490/u);
+  assert.match(output, /0010-standalone-source-launcher-0\.10\.patch/u);
+  assert.match(output, /0011-dsh-0\.1\.5-runtime-context\.patch/u);
   assert.match(output, /0003-dsh-first-runtime\.patch/u);
+  assert.doesNotMatch(output, /0001-standalone-source-launcher\.patch/u);
+  assert.doesNotMatch(output, /0007-rc7-cmdlineargs-ctx-get\.patch/u);
+  assert.doesNotMatch(output, /0009-dsh-alpha-api-adaptation\.patch/u);
   assert.doesNotMatch(output, /0003-live-adoption-revision-retry\.patch/u);
 });
 

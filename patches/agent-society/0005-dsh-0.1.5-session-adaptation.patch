@@ -1,0 +1,467 @@
+diff --git a/agent-host/package.json b/agent-host/package.json
+--- a/agent-host/package.json
++++ b/agent-host/package.json
+@@ -60,7 +60,7 @@
+   },
+   "peerDependencies": {
+-    "@deepseek-ai/dsh": "0.1.2-alpha.2"
++    "@deepseek-ai/dsh": "^0.1.5-rc.1"
+   },
+   "peerDependenciesMeta": {
+     "@deepseek-ai/dsh": {
+       "optional": true
+     }
+   },
+diff --git a/dsh-plugin/package.json b/dsh-plugin/package.json
+index f5d03d9..6594ff1 100644
+--- a/dsh-plugin/package.json
++++ b/dsh-plugin/package.json
+@@ -73,17 +73,17 @@
+   },
+   "peerDependencies": {
+     "@agent-society/agent-config": "^0.1.0",
+-    "@deepseek-ai/dsh": "0.1.2-alpha.2",
++    "@deepseek-ai/dsh": "^0.1.5-rc.1",
+     "@deepseek-ai/cordis": "^4.0.2",
+     "@deepseek-ai/cordis-plugin-timer": "^1.1.4",
+-    "@deepseek-ai/dsh-agent": "^0.1.2-alpha.2",
+-    "@deepseek-ai/dsh-llm": "^0.1.2-alpha.2",
+-    "@deepseek-ai/dsh-sandbox-policy": "^0.1.2-alpha.2",
+-    "@deepseek-ai/dsh-session": "^0.1.2-alpha.2",
+-    "@deepseek-ai/dsh-mcp-client": "^0.1.2-alpha.2",
+-    "@deepseek-ai/dsh-session-persistence": "^0.1.2-alpha.2",
+-    "@deepseek-ai/dsh-system-prompt": "^0.1.2-alpha.2",
+-    "@deepseek-ai/dsh-scope": "^0.1.2-alpha.2",
++    "@deepseek-ai/dsh-agent": "^0.1.5-rc.1",
++    "@deepseek-ai/dsh-llm": "^0.1.5-rc.1",
++    "@deepseek-ai/dsh-sandbox-policy": "^0.1.5-rc.1",
++    "@deepseek-ai/dsh-session": "^0.1.5-rc.1",
++    "@deepseek-ai/dsh-mcp-client": "^0.1.5-rc.1",
++    "@deepseek-ai/dsh-session-persistence": "^0.1.5-rc.1",
++    "@deepseek-ai/dsh-system-prompt": "^0.1.5-rc.1",
++    "@deepseek-ai/dsh-scope": "^0.1.5-rc.1",
+     "@deepseek-ai/schemastery": "^3.18.2"
+   },
+   "peerDependenciesMeta": {
+@@ -97,15 +97,15 @@
+   "devDependencies": {
+     "@deepseek-ai/cordis": "4.0.2",
+     "@deepseek-ai/cordis-plugin-timer": "1.1.4",
+-    "@deepseek-ai/dsh-agent": "0.1.2-alpha.2",
+-    "@deepseek-ai/dsh-llm": "0.1.2-alpha.2",
+-    "@deepseek-ai/dsh-mcp-client": "0.1.2-alpha.2",
+-    "@deepseek-ai/dsh-sandbox-policy": "^0.1.2-alpha.2",
+-    "@deepseek-ai/dsh-scope": "0.1.2-alpha.2",
+-    "@deepseek-ai/dsh-session": "0.1.2-alpha.2",
+-    "@deepseek-ai/dsh-session-persistence": "0.1.2-alpha.2",
+-    "@deepseek-ai/dsh-session-title": "^0.1.2-alpha.2",
+-    "@deepseek-ai/dsh-system-prompt": "0.1.2-alpha.2",
++    "@deepseek-ai/dsh-agent": "0.1.5-rc.1",
++    "@deepseek-ai/dsh-llm": "0.1.5-rc.1",
++    "@deepseek-ai/dsh-mcp-client": "0.1.5-rc.1",
++    "@deepseek-ai/dsh-sandbox-policy": "^0.1.5-rc.1",
++    "@deepseek-ai/dsh-scope": "0.1.5-rc.1",
++    "@deepseek-ai/dsh-session": "0.1.5-rc.1",
++    "@deepseek-ai/dsh-session-persistence": "0.1.5-rc.1",
++    "@deepseek-ai/dsh-session-title": "^0.1.5-rc.1",
++    "@deepseek-ai/dsh-system-prompt": "0.1.5-rc.1",
+     "@deepseek-ai/schemastery": "3.18.2",
+     "@types/node": "^22.0.0",
+     "typescript": "^5.9.3"
+diff --git a/dsh-plugin/src/answer.ts b/dsh-plugin/src/answer.ts
+index 472aea0..853645e 100644
+--- a/dsh-plugin/src/answer.ts
++++ b/dsh-plugin/src/answer.ts
+@@ -107,9 +107,18 @@ export async function answerQuestionWithSession(
+ }
+ 
+ /** Last assistant text block of a session (shared by both answer paths). */
+-function lastAssistantText(agent: { session: { events: readonly unknown[] } }): string {
+-  for (let index = agent.session.events.length - 1; index >= 0; index -= 1) {
+-    const event = agent.session.events[index] as
++function lastAssistantText(agent: {
++  session: {
++    snapshotEvents?: () => readonly unknown[]
++    /** Compatibility face for older test doubles and dsh releases. */
++    events?: readonly unknown[]
++  }
++}): string {
++  const events = typeof agent.session.snapshotEvents === 'function'
++    ? agent.session.snapshotEvents()
++    : agent.session.events ?? []
++  for (let index = events.length - 1; index >= 0; index -= 1) {
++    const event = events[index] as
+       | { type?: string; data?: { message?: { content?: unknown } } }
+       | undefined
+     if (!event || event.type !== 'assistant/message') continue
+diff --git a/dsh-plugin/src/directory-plugin.ts b/dsh-plugin/src/directory-plugin.ts
+index 19add58..d5769e4 100644
+--- a/dsh-plugin/src/directory-plugin.ts
++++ b/dsh-plugin/src/directory-plugin.ts
+@@ -54,12 +54,36 @@ export const Config: Schema<Config> = Schema.object({
+ 
+ interface SessionHeaderLike {
+   readonly id: string
+-  readonly createdAt: number
++  readonly createdAt?: number
+   readonly cwd?: string
+ }
+ 
+ interface PersistenceLike {
+-  list(): Promise<readonly SessionHeaderLike[]>
++  list(): Promise<readonly PersistenceSnapshotLike[]>
++}
++
++interface PersistenceSnapshotLike {
++  readonly header?: SessionHeaderLike
++  /** Compatibility face for the pre-0.1.5 list result. */
++  readonly id?: string
++  readonly createdAt?: number
++  readonly cwd?: string
++}
++
++function persistenceHeader(
++  snapshot: PersistenceSnapshotLike,
++): SessionHeaderLike | undefined {
++  if (snapshot.header !== undefined && typeof snapshot.header.id === 'string') {
++    return snapshot.header
++  }
++  if (typeof snapshot.id === 'string') {
++    return {
++      id: snapshot.id,
++      ...(snapshot.createdAt === undefined ? {} : { createdAt: snapshot.createdAt }),
++      ...(snapshot.cwd === undefined ? {} : { cwd: snapshot.cwd }),
++    }
++  }
++  return undefined
+ }
+ 
+ export function apply(ctx: Context, config: Config): void {
+@@ -199,7 +223,8 @@ export function apply(ctx: Context, config: Config): void {
+     // Push only rows whose content changed since the last sync: the Hub
+     // directory is deduplicated by latest-seq, and re-pushing unchanged
+     // rows on every 10s cycle would grow the shared event log without bound.
+-    for (const header of headers) {
++    for (const snapshot of headers) {
++      const header = persistenceHeader(snapshot)
+       if (!header || typeof header.id !== 'string') continue
+       const row = buildLocalRow({
+         sessionId: header.id,
+diff --git a/dsh-plugin/src/session-digest-watcher.ts b/dsh-plugin/src/session-digest-watcher.ts
+index 37f5fce..a534460 100644
+--- a/dsh-plugin/src/session-digest-watcher.ts
++++ b/dsh-plugin/src/session-digest-watcher.ts
+@@ -91,9 +91,19 @@ export const Config: Schema<Config> = Schema.object({
+   contextEnabled: Schema.boolean().required(false),
+ })
+ 
++interface SessionEventLike {
++  readonly type?: string
++  readonly time?: number
++  readonly data?: unknown
++}
++
++type SessionEventList = ReadonlyArray<SessionEventLike | undefined>
++
+ interface SessionLike {
+   readonly id: string
+-  readonly events: ReadonlyArray<{ time: number } | undefined>
++  readonly snapshotEvents?: () => SessionEventList
++  /** Compatibility face for older dsh releases and test doubles. */
++  readonly events?: SessionEventList
+ }
+ 
+ interface LiveSessionLike extends SessionLike {
+@@ -105,6 +115,33 @@ interface SessionsLike {
+   list(): SessionLike[]
+ }
+ 
++interface PersistenceHeaderLike {
++  readonly id: string
++  readonly createdAt?: number
++  readonly cwd?: string
++}
++
++interface PersistenceSnapshotLike {
++  readonly header?: PersistenceHeaderLike
++  /** Compatibility face for the pre-0.1.5 list result. */
++  readonly id?: string
++  readonly createdAt?: number
++  readonly cwd?: string
++}
++
++interface PersistenceReadHandleLike {
++  readonly header?: PersistenceHeaderLike
++  read(): Promise<{ events: SessionEventList }>
++  close(): Promise<void>
++}
++
++interface PersistenceLike {
++  list(): Promise<ReadonlyArray<PersistenceSnapshotLike>>
++  open?(id: string, access: 'read'): Promise<PersistenceReadHandleLike>
++  /** Compatibility face for the pre-0.1.5 persistence API. */
++  inspect?(id: string): Promise<{ events: SessionEventList }>
++}
++
+ interface DigestState {
+   [sessionId: string]: { count: number; lastPromptAt?: number; digestAt: number }
+ }
+@@ -166,12 +203,7 @@ export function apply(ctx: Context, config: Config): void {
+ 
+   async function tick(): Promise<void> {
+     const sessions = ctx.get('sessions') as SessionsLike | undefined
+-    const persistence = ctx.get('sessionPersistence') as
+-      | {
+-          list(): Promise<ReadonlyArray<{ id: string; createdAt: number; cwd?: string }>>
+-          inspect(id: string): Promise<{ events: ReadonlyArray<unknown> }>
+-        }
+-      | undefined
++    const persistence = ctx.get('sessionPersistence') as PersistenceLike | undefined
+     const now = Date.now()
+     const liveIds = new Set<string>()
+     ctx.logger.debug(
+@@ -184,7 +216,7 @@ export function apply(ctx: Context, config: Config): void {
+       for (const session of sessions.list()) {
+         if (!session || typeof session.id !== 'string') continue
+         liveIds.add(session.id)
+-        await handleRound(session.id, session.events ?? [], { live: true })
++        await handleRound(session.id, sessionEvents(session), { live: true })
+       }
+     }
+ 
+@@ -202,17 +234,17 @@ export function apply(ctx: Context, config: Config): void {
+         const activity = loadProjectionActivity(
+           process.env.DSH_HOME?.trim() || resolve(homedir(), '.dsh'),
+         )
+-        for (const header of headers) {
+-          if (!header || typeof header.id !== 'string') continue
++        for (const snapshot of headers) {
++          const header = persistenceHeader(snapshot)
++          if (header === undefined) continue
+           if (liveIds.has(header.id)) continue
+           const info = activity.get(header.id)
+           const prior = state[header.id]
+           let lastPromptAt = info?.lastPromptAt
+           // Read the persisted tail once; it also feeds the summary below.
+-          let events: ReadonlyArray<{ time: number }> | undefined
++          let events: SessionEventList | undefined
+           if (lastPromptAt === undefined) {
+-            const inspection = await persistence.inspect(header.id)
+-            events = inspection.events as ReadonlyArray<{ time: number }>
++            events = (await readPersistedEvents(persistence, header.id))
+             const lastTime = lastEventTimeMs(events)
+             if (lastTime === undefined) continue
+             lastPromptAt = lastTime
+@@ -226,8 +258,7 @@ export function apply(ctx: Context, config: Config): void {
+           let lease: DigestLeaseResult | undefined
+           try {
+             if (events === undefined) {
+-              const inspection = await persistence.inspect(header.id)
+-              events = inspection.events as ReadonlyArray<{ time: number }>
++              events = await readPersistedEvents(persistence, header.id)
+             }
+             const count = messageCountOf(events)
+             // A session with no real conversation messages has nothing to
+@@ -306,7 +337,7 @@ export function apply(ctx: Context, config: Config): void {
+ 
+   async function handleRound(
+     sessionId: string,
+-    events: ReadonlyArray<{ time: number } | undefined>,
++    events: SessionEventList,
+     options: { live: boolean },
+   ): Promise<void> {
+     const now = Date.now()
+@@ -435,6 +466,46 @@ export function apply(ctx: Context, config: Config): void {
+ 
+ }
+ 
++function sessionEvents(session: SessionLike): SessionEventList {
++  return typeof session.snapshotEvents === 'function'
++    ? session.snapshotEvents()
++    : session.events ?? []
++}
++
++function persistenceHeader(
++  snapshot: PersistenceSnapshotLike,
++): PersistenceHeaderLike | undefined {
++  if (snapshot.header !== undefined && typeof snapshot.header.id === 'string') {
++    return snapshot.header
++  }
++  if (typeof snapshot.id === 'string') {
++    return {
++      id: snapshot.id,
++      ...(snapshot.createdAt === undefined ? {} : { createdAt: snapshot.createdAt }),
++      ...(snapshot.cwd === undefined ? {} : { cwd: snapshot.cwd }),
++    }
++  }
++  return undefined
++}
++
++async function readPersistedEvents(
++  persistence: PersistenceLike,
++  sessionId: string,
++): Promise<SessionEventList> {
++  if (typeof persistence.open === 'function') {
++    const handle = await persistence.open(sessionId, 'read')
++    try {
++      return (await handle.read()).events
++    } finally {
++      await handle.close()
++    }
++  }
++  if (typeof persistence.inspect === 'function') {
++    return (await persistence.inspect(sessionId)).events
++  }
++  throw new Error('dsh session persistence does not expose a read API')
++}
++
+ function messageTextOf(event: unknown): string {
+   const data = (event as {
+     data?: { message?: { content?: unknown }; content?: unknown }
+@@ -454,7 +525,7 @@ function messageTextOf(event: unknown): string {
+ }
+ 
+ function lastEventTimeMs(
+-  events: ReadonlyArray<{ time: number } | undefined>,
++  events: ReadonlyArray<{ time?: number } | undefined>,
+ ): number | undefined {
+   for (let index = events.length - 1; index >= 0; index -= 1) {
+     const event = events[index]
+@@ -464,7 +535,7 @@ function lastEventTimeMs(
+ }
+ 
+ export function extractFields(session: SessionLike): SummaryFields {
+-  const events = session.events ?? []
++  const events = sessionEvents(session)
+   let objective = ''
+   let resultText = ''
+   let toolCount = 0
+diff --git a/dsh-plugin/src/summarizer.ts b/dsh-plugin/src/summarizer.ts
+index 4ffeee2..b975d69 100644
+--- a/dsh-plugin/src/summarizer.ts
++++ b/dsh-plugin/src/summarizer.ts
+@@ -101,10 +101,16 @@ export async function summarizeLiveSession(options: {
+   // The request's call-config fields must match the materialized prepared
+   // config exactly (adapter defaults included), or the dispatch rejects
+   // with "prepared LLM call config changed before adapter dispatch".
++  // Since dsh 0.1.5 the system prompt is a durable `system/message` in the
++  // session surface and therefore already appears in `history`. Keep reading
++  // the retired field only for older callers/test doubles.
++  const legacySystem = (requestHeader as EpochHeader & { system?: unknown }).system
+   const stream = prepared.stream({
+     ...prepared.config,
+     messages: [...history, instruction],
+-    ...(requestHeader.system ? { system: requestHeader.system } : {}),
++    ...(typeof legacySystem === 'string' && legacySystem.length > 0
++      ? { system: legacySystem }
++      : {}),
+     ...(requestHeader.tools && requestHeader.tools.length > 0
+       ? { tools: requestHeader.tools }
+       : {}),
+diff --git a/dsh-plugin/src/task-bridge.ts b/dsh-plugin/src/task-bridge.ts
+index 1cc6d80..1459622 100644
+--- a/dsh-plugin/src/task-bridge.ts
++++ b/dsh-plugin/src/task-bridge.ts
+@@ -27,7 +27,7 @@ import { resolve } from 'node:path'
+ 
+ import { HubClient, type HubClaim } from './hub-client.js'
+ import { buildSessionDigest } from './digest.js'
+-import { lastAssistantText, TASK_PROMPT } from './worker-plugin.js'
++import { lastAssistantText, sessionEvents, TASK_PROMPT } from './worker-plugin.js'
+ 
+ export const name = 'agent-society-task-bridge'
+ export const inject = ['timer']
+@@ -214,7 +214,7 @@ export function apply(ctx: Context, config: Config): void {
+     )
+     await agent.whenIdle()
+ 
+-    const events = agent.session.events
++    const events = sessionEvents(agent.session)
+     let resultText = ''
+     try {
+       resultText = lastAssistantText(events)
+diff --git a/dsh-plugin/src/worker-plugin.ts b/dsh-plugin/src/worker-plugin.ts
+index 670b716..f869828 100644
+--- a/dsh-plugin/src/worker-plugin.ts
++++ b/dsh-plugin/src/worker-plugin.ts
+@@ -575,7 +575,7 @@ class WorkerLoop {
+     const running = this.running
+     if (!running || this.disposed) return
+     try {
+-      const events = running.agent.session.events
++      const events = sessionEvents(running.agent.session)
+       const toolCalls = events.filter((event) => event?.type === 'tool/call')
+       const lastToolEvent = toolCalls[toolCalls.length - 1]
+       let lastTool: string | undefined
+@@ -747,7 +747,7 @@ class WorkerLoop {
+         )
+         return
+       }
+-      const text = lastAssistantText(agent.session.events)
++      const text = lastAssistantText(sessionEvents(agent.session))
+       const finalTitle = this.currentSessionTitle(agent.session) ?? running.title
+       const transcript = await this.attachTranscript(
+         task,
+@@ -894,7 +894,23 @@ class WorkerLoop {
+     toolPolicy: ToolPolicy,
+   ): Promise<HubArtifact | undefined> {
+     try {
+-      const location = this.ctx.sessionPersistence.locate(session.header)
++      // dsh 0.1.5 exposes persistence through logical read handles and no
++      // longer promises a backend file path or raw-artifact reader. Keep the
++      // old physical-artifact path only when an older backend explicitly
++      // provides it; never reconstruct and upload a full transcript through a
++      // new, undocumented API.
++      const persistence = this.ctx.sessionPersistence as unknown as {
++        locate?: (header: Session['header']) => { path: string } | undefined
++        supportsRawArtifacts?: boolean
++        readRaw?: (id: Session['id']) => Promise<{ content: string } | undefined>
++      }
++      if (typeof persistence.locate !== 'function') {
++        this.ctx.logger.debug(
++          `agent-society-worker transcript artifact skipped for ${session.id}: dsh persistence has no raw artifact interface`,
++        )
++        return undefined
++      }
++      const location = persistence.locate(session.header)
+       if (!location || !existsSync(location.path)) return undefined
+       const name = `dsh-transcript-${runId}-${basename(location.path)}`
+       const metadata: Record<string, unknown> = {
+@@ -903,8 +919,8 @@ class WorkerLoop {
+         ...(title === undefined ? {} : { dsh_session_title: title }),
+       }
+       let raw: string | undefined
+-      if (this.ctx.sessionPersistence.supportsRawArtifacts) {
+-        raw = (await this.ctx.sessionPersistence.readRaw(session.id))?.content
++      if (persistence.supportsRawArtifacts && typeof persistence.readRaw === 'function') {
++        raw = (await persistence.readRaw(session.id))?.content
+       }
+       if (raw) {
+         const bytes = Buffer.byteLength(raw, 'utf8')
+@@ -957,7 +973,7 @@ class WorkerLoop {
+     toolPolicy: ToolPolicy
+     status: 'completed' | 'failed'
+   }): void {
+-    const events = options.session.events
++    const events = sessionEvents(options.session)
+     const toolCount = events.filter((event) => event?.type === 'tool/call').length
+     const messageCount = events.filter(
+       (event) => event?.type === 'user/message' || event?.type === 'assistant/message',
+@@ -1284,6 +1300,17 @@ function truncateTitleUtf8(value: string, maxBytes = 80): string {
+   return result.trim()
+ }
+ 
++/** Read the canonical event log while keeping old test doubles usable. */
++export function sessionEvents(session: {
++  snapshotEvents?: () => readonly SessionEvent[]
++  /** Compatibility face for older dsh releases and test doubles. */
++  events?: readonly SessionEvent[]
++}): readonly SessionEvent[] {
++  return typeof session.snapshotEvents === 'function'
++    ? session.snapshotEvents()
++    : session.events ?? []
++}
++
+ export function lastAssistantText(events: readonly SessionEvent[]): string {
+   for (let index = events.length - 1; index >= 0; index -= 1) {
+     const event = events[index]

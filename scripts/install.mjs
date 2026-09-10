@@ -88,7 +88,7 @@ function parseArgs(argv) {
     withHost: process.env.COMBO_WITH_HOST === '1',
     withHostExplicit: process.env.COMBO_WITH_HOST === '1',
     dshPackage: process.env.COMBO_DSH_PACKAGE || publishedDsh.package || '@deepseek-ai/dsh',
-    dshVersion: process.env.COMBO_DSH_VERSION || publishedDsh.version || '0.1.2-alpha.5',
+    dshVersion: process.env.COMBO_DSH_VERSION || publishedDsh.version || '0.1.5-rc.1',
     pluginSpec: process.env.COMBO_AGENT_PLUGIN || publishedPlugin.package || '@agent-society/dsh-agent-society',
     dryRun: false,
     yes: false,
@@ -636,8 +636,13 @@ async function installDependencies(harness, tui, agentSociety, openCodeFull, cha
   console.log(installTui ? '[deps] dsh-TUI pnpm install' : '[skip] dsh-TUI node_modules current')
   // Upstream moved to pnpm (package-lock.json -> pnpm-lock.yaml); its
   // `prepare` script compiles with tsc before deps are linked, so install
-  // with scripts skipped and let buildAll run the real compile.
-  if (installTui) pnpm(tui, ['install', '--frozen-lockfile', '--ignore-scripts'])
+  // with scripts skipped and let buildAll run the real compile. The pinned
+  // TUI compatibility patch rewrites its development dependency versions for
+  // the sibling DSH checkout, while those prerelease package versions are not
+  // all published to npm. Bootstrap dependencies against the checkout's
+  // original package/lock pair, then restore the patched files byte-for-byte;
+  // buildAll links the actual sibling DSH packages immediately afterwards.
+  if (installTui) installTuiBootstrapDependencies(tui)
 
   const installAgentHost = changed.has('agent-society') || !existsSync(join(agentSociety, 'agent-host', 'node_modules'))
   console.log(installAgentHost ? '[deps] AgentSociety agent-host npm ci' : '[skip] agent-host node_modules current')
@@ -666,11 +671,11 @@ async function installDependencies(harness, tui, agentSociety, openCodeFull, cha
   const installPlugin = changed.has('agent-society') || !existsSync(join(agentSociety, 'dsh-plugin', 'node_modules', 'typescript'))
   console.log(installPlugin ? '[deps] AgentSociety dsh-plugin npm ci' : '[skip] dsh-plugin node_modules current')
   if (installPlugin) {
-    // The pinned DSH workspace is currently an alpha release that is not yet
-    // published to npm. Install only the plugin's published dependencies;
-    // local DSH packages are linked from the checkout immediately before the
-    // plugin build. Keep the source manifest and lockfile byte-for-byte
-    // unchanged after this bootstrap install.
+    // Source mode intentionally builds against the pinned DSH checkout rather
+    // than the published npm package. Install only the plugin's published
+    // dependencies; local DSH packages are linked from the checkout
+    // immediately before the plugin build. Keep the source manifest and
+    // lockfile byte-for-byte unchanged after this bootstrap install.
     const pluginDir = join(agentSociety, 'dsh-plugin')
     if (existsSync(join(harness, 'packages', 'core', 'agent', 'package.json'))) {
       const packageFile = join(pluginDir, 'package.json')
@@ -707,6 +712,31 @@ async function installDependencies(harness, tui, agentSociety, openCodeFull, cha
     const installOpenCodeFull = changed.has('dsh-opencode-full') || !existsSync(join(openCodeFull, 'node_modules', 'typescript'))
     console.log(installOpenCodeFull ? '[deps] dsh-opencode-full npm ci' : '[skip] dsh-opencode-full node_modules current')
     if (installOpenCodeFull) runChecked('npm', ['ci'], openCodeFull)
+  }
+}
+
+function installTuiBootstrapDependencies(tui) {
+  const files = ['package.json', 'pnpm-lock.yaml']
+  const originals = new Map()
+  const pinned = new Map()
+  for (const file of files) {
+    const path = join(tui, file)
+    if (!existsSync(path)) continue
+    originals.set(file, readFileSync(path, 'utf8'))
+    const result = runCapture('git', ['show', `HEAD:${file}`], tui, false)
+    if (result.status !== 0) {
+      // A user-supplied source checkout may not be a git worktree. In that
+      // case retain its own manifest and let pnpm report any real mismatch.
+      pnpm(tui, ['install', '--frozen-lockfile', '--ignore-scripts'])
+      return
+    }
+    pinned.set(file, result.stdout)
+  }
+  try {
+    for (const [file, content] of pinned) writeFileSync(join(tui, file), content)
+    pnpm(tui, ['install', '--frozen-lockfile', '--ignore-scripts'])
+  } finally {
+    for (const [file, content] of originals) writeFileSync(join(tui, file), content)
   }
 }
 

@@ -1,0 +1,16 @@
+diff --git a/src/dsh-adapter/plugin.ts b/src/dsh-adapter/plugin.ts
+index 3851031..3bc400b 100644
+--- a/src/dsh-adapter/plugin.ts
++++ b/src/dsh-adapter/plugin.ts
+@@ -1390,7 +1390,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
+   // exposed `{ args }` — so read both. Submit once the channel exists;
+   // delivery goes through the normal pending/inbox chain, so no special
+   // timing is needed; flag-shaped leftovers are not prompt text.
+-  const cmdline = (ctx as { cmdlineArgs?: { get?: () => readonly string[]; args?: readonly string[] } }).cmdlineArgs
++  // dsh 0.1.5 uses a guarded Cordis context: undeclared property access
++  // throws before optional chaining can run. Read the optional cmdline
++  // service through the public accessor instead.
++  const cmdline = ctx.get('cmdlineArgs') as { get?: () => readonly string[]; args?: readonly string[] } | undefined
+   const cmdlineArgs = cmdline?.get?.() ?? cmdline?.args
+   const initialPrompt = initialPromptFromCmdlineArgs(cmdlineArgs)
+   if (initialPrompt) submitChannel(initialPrompt)

@@ -23,7 +23,7 @@ jobs:
         shell: bash
         run: |
           ROOT="$RUNNER_TEMP/combo-install"
-          node scripts/install.mjs --root "$ROOT" --patch-only
+          node scripts/install.mjs --root "$ROOT" --source --patch-only
           test -f "$ROOT/sources/deepseek-harness/packages/core/session/src/types.ts"
           test -f "$ROOT/sources/dsh-TUI/scripts/run.ts"
           test -f "$ROOT/sources/agent-society/dsh-plugin/cordis.patch.yml"

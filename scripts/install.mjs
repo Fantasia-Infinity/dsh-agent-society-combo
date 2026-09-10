@@ -28,7 +28,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { homedir, platform } from 'node:os'
+import { homedir, platform, arch } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
@@ -835,6 +835,29 @@ async function buildAll(harness, tui, agentSociety, openCodeFull, changed) {
     console.log('[skip] deepseek-harness web dist already built')
   }
 
+  // dsh >= 0.1.5 locks sessions through the native system addon (POSIX
+  // flock). Without the host binary every session dies at creation with
+  // "session artifact ... uses .jsonl.zstd" / "ended without an assistant
+  // message". The static landlock helper also built by build:native needs
+  // musl-gcc, so fall back to the host addon when the full pass fails.
+  const nativeSystem = join(harness, 'native', 'system')
+  const nativePlatformDir = join(nativeSystem, 'packages', `${platform()}-${arch()}`)
+  if (
+    options.forceBuild ||
+    changed.has('deepseek-harness') ||
+    !nativeAddonBuilt(nativePlatformDir)
+  ) {
+    console.log('[build] deepseek-harness native system addon')
+    try {
+      pnpm(nativeSystem, ['run', 'build:native'])
+    } catch {
+      console.warn('[warn] full native build failed (landlock needs musl-gcc); building the host addon only')
+      pnpm(nativeSystem, ['run', 'build:native', '--', '--host-addon-only'])
+    }
+  } else {
+    console.log('[skip] deepseek-harness native addon already built')
+  }
+
   const tuiPlugin = join(tui, 'lib', 'types', 'index.js')
   if (
     options.forceBuild ||
@@ -1282,6 +1305,18 @@ function copyPreset(source, dest) {
         : undefined
     if (!src) throw new Error(`preset file missing: ${direct} (or ${nested})`)
     copyFileSync(src, join(dest, name))
+  }
+}
+
+function nativeAddonBuilt(platformDir) {
+  const binDir = join(platformDir, 'bin')
+  if (!existsSync(binDir)) return false
+  try {
+    return readdirSync(binDir, { recursive: true }).some((entry) =>
+      String(entry).endsWith('system.node'),
+    )
+  } catch {
+    return false
   }
 }
 

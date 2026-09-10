@@ -3041,10 +3041,10 @@ index 6bbb83d..349b356 100644
      if (message.type !== "http") return;
      const requestId = String(message.id ?? "");
      if (!requestId) return;
-@@ -427,7 +472,7 @@ export class WebBridge {
-       const url = buildLocalUrl(this.target, path);
-       response = await this.fetchImpl(url, {
-         method,
+@@ -430,7 +475,7 @@ export class WebBridge {
+         // Ask the local server for an identity body: Node's fetch transparently
+         // decompresses gzip while keeping the content-encoding header, which
+         // would make the Hub/browser try to decode plaintext.
 -        headers: { ...headers, "accept-encoding": "identity" },
 +        headers: this.localHeaders({ ...headers, "accept-encoding": "identity" }),
          ...(body !== undefined ? { body } : {}),

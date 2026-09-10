@@ -52,7 +52,7 @@
       "patches": [
         {
           "path": "patches/agent-society/0001-worker-state-and-web-tunnel-hardening.patch",
-          "sha256": "2f8f9f67381ed211c5d3b2364ccc1d23b604a7cf2fb889b6b30987627a62977e"
+          "sha256": "60fa7a6caa56f45ff0162281086a0cafc9d2ba187e244e05b764a0368630aea1"
         },
         {
           "path": "patches/agent-society/0003-dsh-first-runtime.patch",

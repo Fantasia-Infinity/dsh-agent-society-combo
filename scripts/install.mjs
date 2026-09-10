@@ -964,7 +964,7 @@ async function createLinks(harness, tui, agentSociety) {
     )
   } else {
     linkExecutable(join(harness, 'apps', 'cli', 'lib', 'bin.js'), join(binDir, 'dsh'))
-    linkExecutable(join(tui, 'bin', 'dsh-tui-local.js'), join(binDir, 'dsh-tui'))
+    writeDshTuiWrapper(binDir, tui, agentSociety)
     linkExecutable(join(agentSociety, 'agent'), join(binDir, 'agent'))
   }
 
@@ -1264,6 +1264,73 @@ function linkOrCopy(source, target) {
   } catch {
     cpSync(source, target, { recursive: true, dereference: true })
   }
+}
+
+/**
+ * The standalone dsh-TUI launcher knows nothing about AgentSociety's Hub
+ * credentials, so launching `dsh-tui` directly left its Hub MCP rows
+ * disabled. Install a thin wrapper that resolves the Hub URL from the
+ * AgentSociety env file and the node token from the local keyring (kept
+ * fresh by the worker), exports the Hub env, and execs the real launcher;
+ * the layered-env patch then observes AGENT_SOCIETY_HUB_MCP early.
+ * A target that is not this wrapper is preserved.
+ */
+function writeDshTuiWrapper(binDir, tui, agentSociety) {
+  const mark = 'dsh-tui launcher with AgentSociety Hub tools'
+  const target = join(binDir, 'dsh-tui')
+  if (existsSync(target) || isLink(target)) {
+    let existing = ''
+    try {
+      existing = readFileSync(target, 'utf8')
+    } catch {
+      console.log(`[keep] ${target}`)
+      return
+    }
+    if (!existing.includes(mark)) {
+      console.log(`[keep] ${target} (not the combo wrapper)`)
+      return
+    }
+  }
+  const launcher = join(tui, 'bin', 'dsh-tui-local.js')
+  const envFile = join(agentSociety, '.private', 'env', 'agent.env')
+  const quote = (value) => `'${String(value).replaceAll("'", `'\\''`)}'`
+  const script = `#!/bin/sh
+# ${mark}.
+# Resolves the Hub URL from the AgentSociety env file and the node token
+# from the local keyring (kept fresh by the worker), then execs the real
+# launcher so the layered-env patch observes the Hub switches early.
+set -eu
+LAUNCHER=${quote(launcher)}
+ENV_FILE=${quote(envFile)}
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE" || true
+  set +a
+fi
+NODE_BIN="$(command -v node)"
+if [ ! -f "$LAUNCHER" ]; then
+  echo "dsh-tui launcher not found at $LAUNCHER" >&2
+  exit 1
+fi
+HUB_URL="\${AGENT_SOCIETY_HUB_URL:-\${AGENT_HUB_URL:-}}"
+TOKEN_SERVICE="\${AGENT_HUB_NODE_TOKEN_CREDENTIAL_SERVICE:-AgentSociety Hub Node}"
+TOKEN_ACCOUNT="\${AGENT_HUB_NODE_TOKEN_CREDENTIAL_ACCOUNT:-$USER}"
+HUB_TOKEN="$(secret-tool lookup service "$TOKEN_SERVICE" username "$TOKEN_ACCOUNT" 2>/dev/null || true)"
+if [ -n "$HUB_URL" ] && [ -n "$HUB_TOKEN" ]; then
+  export AGENT_SOCIETY_HUB_URL="$HUB_URL"
+  export AGENT_SOCIETY_HUB_TOKEN="$HUB_TOKEN"
+  export AGENT_SOCIETY_HUB_MCP=1
+else
+  echo "dsh-tui: no Hub credential; starting without Hub tools" >&2
+  export AGENT_SOCIETY_HUB_MCP=0
+fi
+exec "$NODE_BIN" "$LAUNCHER" "$@"
+`
+  ensureDir(binDir)
+  writeFileSync(target, script, { mode: 0o755 })
+  chmodSync(target, 0o755)
+  console.log(`[link] ${target} -> ${launcher} (hub-env wrapper)`)
 }
 
 function linkExecutable(source, target) {

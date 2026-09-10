@@ -319,7 +319,6 @@ index d23e1ee..50e8eff 100644
    '涉及某个会话时 hub_directory_get 下钻（depth 2 看其 digest）判断相关性后，' +
    'hub_ask 携带 target_session_id 在该会话上下文中发问（回答写回该会话）；' +
    '得出可复用结论时 hub_context_append 写回。'
-
 diff --git a/dsh-plugin/src/prompt-guard.ts b/dsh-plugin/src/prompt-guard.ts
 index af4e2e0..2433e1a 100644
 --- a/dsh-plugin/src/prompt-guard.ts
@@ -1733,21 +1732,10 @@ diff --git a/dsh-plugin/src/config-plugin.ts b/dsh-plugin/src/config-plugin.ts
    const config = loadAgentConfig({ cwd: process.cwd() });
    for (const key of NON_SECRET_KEYS) {
      const value = config.values[key]?.trim();
-@@ -102,6 +110,34 @@ export function apply(ctx: Context): void {
+@@ -102,6 +110,23 @@ export function apply(ctx: Context): void {
    if (!process.env.AGENT_SOCIETY_HUB_URL) {
      process.env.AGENT_SOCIETY_HUB_URL = "";
    }
-+  // Direct `dsh web` and the dedicated worker profile do not pass through
-+  // agent-host's child-environment builder. Once the shared config/keychain
-+  // layer has supplied both Hub coordinates, enable the same MCP surface by
-+  // default. An explicit `AGENT_SOCIETY_HUB_MCP=0` remains authoritative.
-+  if (process.env.AGENT_SOCIETY_HUB_MCP === undefined) {
-+    process.env.AGENT_SOCIETY_HUB_MCP =
-+      process.env.AGENT_SOCIETY_HUB_URL &&
-+      process.env.AGENT_SOCIETY_HUB_TOKEN
-+        ? "1"
-+        : "0";
-+  }
 +}
 +
 +function observeUsage(

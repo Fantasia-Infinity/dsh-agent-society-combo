@@ -1,0 +1,27 @@
+diff --git a/scripts/run.ts b/scripts/run.ts
+--- a/scripts/run.ts
++++ b/scripts/run.ts
+@@ -30,7 +30,8 @@ import {
+   boot,
+   composeEntries,
+   healProfilesModuleFallback,
+   installFailLoud,
++  loadLayeredEnv,
+   loadOverlayPatches,
+   watchUserPatches,
+   type PatchOptions,
+@@ -104,6 +105,14 @@ if (!process.env.DEEPSEEK_API_KEY) {
+   }
+ }
+ 
++// Match the regular dsh CLI: load the invoking-directory and $DSH_HOME
++// environment layers before evaluating any Cordis patch expressions. The
++// AgentSociety config plugin also reads this file, but that happens after the
++// loader has already evaluated disabled rows; loading it here prevents
++// launch-scoped switches such as AGENT_SOCIETY_HUB_MCP=1 from being observed
++// too late by the TUI source launcher.
++loadLayeredEnv('dsh')
++
+ /**
+  * Write a pre-boot diagnostic with every state variable that could explain
+  * a failure. Deleted 5 s after successful boot; appended with the error on

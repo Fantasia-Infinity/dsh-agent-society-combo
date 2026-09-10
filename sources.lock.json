@@ -42,6 +42,10 @@
         {
           "path": "patches/dsh-tui/0011-dsh-0.1.5-runtime-context.patch",
           "sha256": "1cf4ff6394578bb9af9383aa1b62e30e2442f76f5393c76bbf91355886244d0b"
+        },
+        {
+          "path": "patches/dsh-tui/0012-load-home-env-before-composition.patch",
+          "sha256": "1fad561b2ab20f0f0cb5c433962b34010b609ee9a520f6ec04ec48950922b76d"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/dsh-TUI.git"
@@ -60,7 +64,7 @@
         },
         {
           "path": "patches/agent-society/0004-cache-friendly-context.patch",
-          "sha256": "447e7c893be5fa7310ccfc5b5bcc13dbecbcb219c0a88aae7ca93be069701406"
+          "sha256": "6516fe680a9bbbd8b0293136b5a3191e291b371ad1ad04d1c4ee706b35e4779a"
         },
         {
           "path": "patches/agent-society/0005-dsh-0.1.5-session-adaptation.patch",

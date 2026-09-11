@@ -2982,7 +2982,7 @@ index 6bbb83d..349b356 100644
 +/** WebSocket constructor with an optional Node/undici headers option. */
 +type LocalWebSocketCtor = new (
 +  url: string,
-+  protocols?: string | string[],
++  protocolsOrInit?: string | string[] | { headers?: Record<string, string> },
 +  options?: { headers?: Record<string, string> },
 +) => WebSocket;
 +
@@ -3070,13 +3070,15 @@ index 6bbb83d..349b356 100644
      let local: WebSocket;
      try {
 -      local = new this.WebSocketImpl(`${this.target}${path}`);
++      // Node/undici's WebSocket reads its init object (headers) from the
++      // SECOND argument; the third-position options form is ignored and
++      // silently drops the local session cookie.
 +      local = new (this.WebSocketImpl as LocalWebSocketCtor)(
-+          `${this.target}${path}`,
-+          undefined,
-+          this.dshCookie === undefined
-+            ? undefined
-+            : { headers: { cookie: this.dshCookie } },
-+        );
++        `${this.target}${path}`,
++        this.dshCookie === undefined
++          ? undefined
++          : { headers: { cookie: this.dshCookie } },
++      );
      } catch (error) {
        this.sendTunnel(ws, {
          type: "ws-open-ack",

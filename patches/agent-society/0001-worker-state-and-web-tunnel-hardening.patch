@@ -2954,7 +2954,7 @@ index 7ad5b13..e033124 100644
        worker_session_mode: config.workerSessionMode,
      },
 diff --git a/agent-host/src/web-bridge.ts b/agent-host/src/web-bridge.ts
-index 6bbb83d..349b356 100644
+index 2dfb03b..22420b5 100644
 --- a/agent-host/src/web-bridge.ts
 +++ b/agent-host/src/web-bridge.ts
 @@ -20,6 +20,17 @@ export interface WebBridgeOptions {
@@ -3050,7 +3050,7 @@ index 6bbb83d..349b356 100644
          ...(body !== undefined ? { body } : {}),
          signal: this.abortController.signal,
        });
-@@ -472,12 +517,12 @@ export class WebBridge {
+@@ -482,12 +527,12 @@ export class WebBridge {
      });
    }
  
@@ -3065,14 +3065,15 @@ index 6bbb83d..349b356 100644
        this.sendTunnel(ws, {
          type: "ws-open-ack",
          id: streamId,
-@@ -488,7 +533,13 @@ export class WebBridge {
+@@ -498,7 +543,16 @@ export class WebBridge {
      }
      let local: WebSocket;
      try {
 -      local = new this.WebSocketImpl(`${this.target}${path}`);
 +      // Node/undici's WebSocket reads its init object (headers) from the
 +      // SECOND argument; the third-position options form is ignored and
-+      // silently drops the local session cookie.
++      // silently drops the local session cookie. The local server auth is
++      // authority-bound, so the cookie must ride the upgrade request.
 +      local = new (this.WebSocketImpl as LocalWebSocketCtor)(
 +        `${this.target}${path}`,
 +        this.dshCookie === undefined
@@ -3082,7 +3083,7 @@ index 6bbb83d..349b356 100644
      } catch (error) {
        this.sendTunnel(ws, {
          type: "ws-open-ack",
-@@ -584,6 +635,35 @@ export class WebBridge {
+@@ -594,6 +648,35 @@ export class WebBridge {
      }, { once: true });
    }
  

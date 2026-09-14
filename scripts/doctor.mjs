@@ -116,7 +116,7 @@ async function doctorNpm() {
     process.env.COMBO_DSH_VERSION ||
     state.expectedDshVersion ||
     publishedDsh.version ||
-    "0.1.5-rc.1";
+    "0.1.5-rc.2";
   const dsh = resolveDshInvocation();
   check(
     "dsh command",
@@ -389,7 +389,7 @@ function doctorSource() {
       const actual = result.stdout.trim();
       check(
         name + " commit",
-        actual === component.commit,
+        actual === component.commit || actual.startsWith(component.commit),
         "wanted " + component.commit + ", got " + (actual || "unknown"),
         "node scripts/install.mjs --source --update",
       );
@@ -532,7 +532,7 @@ async function liveWebSmoke(dsh) {
     "live dsh Web startup",
     Boolean(html) && !badPreload,
     html ? "HTTP response received" : output.trim().slice(-500) || "no HTTP response",
-    "npm install -g @deepseek-ai/dsh@0.1.5-rc.1 && dsh web --no-open",
+    "npm install -g @deepseek-ai/dsh@0.1.5-rc.2 && dsh web --no-open",
   );
   if (html) {
     const hasClientPreload = html.includes(

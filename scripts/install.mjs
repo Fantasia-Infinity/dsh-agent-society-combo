@@ -88,7 +88,7 @@ function parseArgs(argv) {
     withHost: process.env.COMBO_WITH_HOST === '1',
     withHostExplicit: process.env.COMBO_WITH_HOST === '1',
     dshPackage: process.env.COMBO_DSH_PACKAGE || publishedDsh.package || '@deepseek-ai/dsh',
-    dshVersion: process.env.COMBO_DSH_VERSION || publishedDsh.version || '0.1.5-rc.1',
+    dshVersion: process.env.COMBO_DSH_VERSION || publishedDsh.version || '0.1.5-rc.2',
     pluginSpec: process.env.COMBO_AGENT_PLUGIN || publishedPlugin.package || '@agent-society/dsh-agent-society',
     dryRun: false,
     yes: false,
@@ -496,7 +496,7 @@ async function installComponent(name) {
     ? runCapture('git', ['rev-parse', 'HEAD'], dir, false)
     : undefined
   const checkoutMatches =
-    actualCommit?.status === 0 && actualCommit.stdout.trim() === comp.commit
+    actualCommit?.status === 0 && commitMatches(actualCommit.stdout.trim(), comp.commit)
   const sameState =
     previousState &&
     // Legacy state files predate the repo field; treat them as matching so
@@ -1482,4 +1482,8 @@ function samePath(left, right) {
   } catch {
     return resolve(left) === resolve(right)
   }
+}
+
+function commitMatches(actual, wanted) {
+  return Boolean(actual && wanted) && (actual === wanted || actual.startsWith(wanted))
 }

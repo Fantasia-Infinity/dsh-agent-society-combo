@@ -2,7 +2,7 @@
   "checksums": {},
   "components": {
     "deepseek-harness": {
-      "commit": "454f46f35983783f9e74d4edf7921bcc6104febf",
+      "commit": "ec2aef5be86c3ec746d1de80535873a934fa5f58",
       "files": [],
       "patches": [
         {
@@ -21,7 +21,7 @@
       "repo": "https://github.com/Fantasia-Infinity/deepseek-harness.git"
     },
     "dsh-tui": {
-      "commit": "9d8a38a71eb2bf7cad857485ea3c20c102067490",
+      "commit": "c45a9f92e255385b80c7f732ed1c61b5510c2a94",
       "files": [
         {
           "dest": "bin/dsh-tui-local.js",
@@ -46,6 +46,10 @@
         {
           "path": "patches/dsh-tui/0012-load-home-env-before-composition.patch",
           "sha256": "1fad561b2ab20f0f0cb5c433962b34010b609ee9a520f6ec04ec48950922b76d"
+        },
+        {
+          "path": "patches/dsh-tui/0013-dsh-0.1.5-rc2-contract.patch",
+          "sha256": "6d22e6cfd962dc73fe8f2c3e2958a1afb9b10cb28eef87865319ee9d8b400e56"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/dsh-TUI.git"
@@ -69,6 +73,10 @@
         {
           "path": "patches/agent-society/0005-dsh-0.1.5-session-adaptation.patch",
           "sha256": "e4eef36842161c452d97e615e8d9c0eb23a910f6da73ae5a064bd00424e55d8c"
+        },
+        {
+          "path": "patches/agent-society/0006-dsh-0.1.5-rc2-package-pins.patch",
+          "sha256": "cf55d9528784d67c9facc34d504e7866f1297f206fb9b745cd961ff287dfbf05"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/AgentSociety.git"
@@ -90,9 +98,9 @@
   "published": {
     "dsh": {
       "package": "@deepseek-ai/dsh",
-      "version": "0.1.5-rc.1",
+      "version": "0.1.5-rc.2",
       "source": "Fantasia-Infinity/deepseek-harness",
-      "commit": "1ef9c1fa9afbea78c5537bfc8b6d1c27d598798e"
+      "commit": "a30530342297e6006623a775166fee1d14fd413a"
     },
     "agentSocietyPlugin": {
       "package": "@agent-society/dsh-agent-society",

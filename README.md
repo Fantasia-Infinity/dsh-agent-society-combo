@@ -19,25 +19,25 @@
 
 | 组件 | 固定 commit |
 |---|---|
-| deepseek-harness | `454f46f35983783f9e74d4edf7921bcc6104febf` |
-| dsh-TUI | `9d8a38a71eb2bf7cad857485ea3c20c102067490` |
+| deepseek-harness | `ec2aef5be86c3ec746d1de80535873a934fa5f58` |
+| dsh-TUI | `c45a9f92e255385b80c7f732ed1c61b5510c2a94` |
 | AgentSociety | `03fe4f7` |
 | dsh-anchored-standard | `dda23ef119e3715f417d73f72eca407732846d1a` |
 | dsh-opencode-full（可选） | `f4d4dda7c2ab8032ed169a770db3594cf98ea638` |
 
-发布版运行时绑定：`@deepseek-ai/dsh@0.1.5-rc.1`，来源为
+发布版运行时绑定：`@deepseek-ai/dsh@0.1.5-rc.2`，来源为
 `Fantasia-Infinity/deepseek-harness`（对应已发布 commit
-`1ef9c1fa9afbea78c5537bfc8b6d1c27d598798e`）；AgentSociety 插件为
+`a30530342297e6006623a775166fee1d14fd413a`）；AgentSociety 插件为
 `@agent-society/dsh-agent-society`。Combo 会分别校验 npm 与 source 模式的 dsh
 版本；两种模式的差异只通过显式 `--source` 选择，不会静默混用。
 
-注意：上游 fork 的源码适配已前移到 `454f46f35983783f9e74d4edf7921bcc6104febf`
+注意：上游 fork 的源码适配已前移到 `ec2aef5be86c3ec746d1de80535873a934fa5f58`
 并用于显式 `combo install --source`；默认 npm 模式使用该 fork 已包含的
-`0.1.5-rc.1` 发布提交。实验性的 Agent Teams 保持上游默认关闭，不加入 Combo profile。
+`0.1.5-rc.2` 发布提交。实验性的 Agent Teams 保持上游默认关闭，不加入 Combo profile。
 
-dsh-TUI `0.10.1` 已对齐 dsh `0.1.5-rc.1`。源码模式会初始化它新增的
+dsh-TUI `0.10.1` 已对齐 dsh `0.1.5-rc.2`。源码模式会初始化它新增的
 `dsh-auth` / `dsh-std` 子模块，并使用 Combo 的 sibling-checkout build 与独立
-source launcher patch；旧的 rc.7 / alpha API patch 已移除。该适配只覆盖 TUI 启动和
+source launcher patch；rc2 版本契约通过 Combo patch 保留 rc1 向后兼容。该适配只覆盖 TUI 启动和
 构建链，不启用 Agent Teams，也不修改 TUI 上游源码。
 
 默认 TUI preset：`anchored-standard`。`standard` / `ptc` / `minimal` /
@@ -76,7 +76,7 @@ AGENT_DSH_WEB_BRIDGE_START=0  # 禁用自动启动，要求已有 DSH Web
 先安装当前 fork 对应的 dsh 发布包：
 
 ```bash
-npm install -g @deepseek-ai/dsh@0.1.5-rc.1
+npm install -g @deepseek-ai/dsh@0.1.5-rc.2
 ```
 
 然后添加 AgentSociety 插件到三个彼此隔离的 profile：
@@ -242,7 +242,7 @@ bridge 会等待本地 DSH Web 就绪、注册 `dsh_web` 节点能力，并转�
 npm 模式下更新由 dsh/npm 管理，不在 `node_modules` 或安装目录执行 Git 更新：
 
 ```bash
-npm install -g @deepseek-ai/dsh@0.1.5-rc.1 @agent-society/agent-host
+npm install -g @deepseek-ai/dsh@0.1.5-rc.2 @agent-society/agent-host
 agent update                         # 更新 dsh、Host、三个 dsh profile 插件
 combo install --update               # 也可以只更新 AgentSociety 插件
 ```

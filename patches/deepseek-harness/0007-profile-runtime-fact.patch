@@ -1,16 +1,14 @@
 diff --git a/apps/cli/src/bin.ts b/apps/cli/src/bin.ts
-index 15e33b1c9..dde07fe9f 100644
+index 7ca9f302e1..88d6471c06 100644
 --- a/apps/cli/src/bin.ts
 +++ b/apps/cli/src/bin.ts
-@@ -28,6 +28,13 @@ function readVersion(): string {
- export async function runCli(): Promise<void> {
-   const invocation = parseDshArgs(process.argv.slice(2), readVersion())
+@@ -31,6 +31,11 @@ export async function runCli(): Promise<void> {
+   const version = readVersion()
+   const invocation = parseDshArgs(process.argv.slice(2), version)
  
 +  // Expose the selected profile to profile bundles as a launch-scoped fact.
-+  // This lets a worker bundle stay enabled only in its own profile without
-+  // putting AGENT_SOCIETY_WORKER=1 in the global $DSH_HOME/.env. The value is
-+  // also available to plugin management and config dumps, which must address
-+  // the same profile layer.
++  // This keeps worker activation profile-local without putting
++  // AGENT_SOCIETY_WORKER=1 in the global $DSH_HOME/.env.
 +  if ('profile' in invocation) process.env.DSH_PROFILE = invocation.profile
 +
    switch (invocation.mode) {

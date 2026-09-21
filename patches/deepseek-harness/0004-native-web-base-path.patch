@@ -1,5 +1,5 @@
 diff --git a/apps/web/index.html b/apps/web/index.html
-index 75c4e5bac..27024bbef 100644
+index 75c4e5bac6..27024bbef4 100644
 --- a/apps/web/index.html
 +++ b/apps/web/index.html
 @@ -3,12 +3,12 @@
@@ -19,7 +19,7 @@ index 75c4e5bac..27024bbef 100644
    </body>
  </html>
 diff --git a/apps/web/public/manifest.webmanifest b/apps/web/public/manifest.webmanifest
-index 20a428fee..583a46791 100644
+index 20a428fee6..583a46791d 100644
 --- a/apps/web/public/manifest.webmanifest
 +++ b/apps/web/public/manifest.webmanifest
 @@ -1,13 +1,13 @@
@@ -41,7 +41,7 @@ index 20a428fee..583a46791 100644
        "type": "image/svg+xml",
        "purpose": "any"
 diff --git a/apps/web/tests/pwa-manifest.e2e.ts b/apps/web/tests/pwa-manifest.e2e.ts
-index 08e210fa2..492431b53 100644
+index 08e210fa26..492431b534 100644
 --- a/apps/web/tests/pwa-manifest.e2e.ts
 +++ b/apps/web/tests/pwa-manifest.e2e.ts
 @@ -11,14 +11,14 @@ it('ships install metadata with the built web application', async () => {
@@ -64,34 +64,29 @@ index 08e210fa2..492431b53 100644
        type: 'image/svg+xml',
        purpose: 'any',
 diff --git a/packages/api/gateway/src/client/stream-client.ts b/packages/api/gateway/src/client/stream-client.ts
-index 0dd56cc72..6e5181050 100644
+index 2fe84ec94f..80bb4d8700 100644
 --- a/packages/api/gateway/src/client/stream-client.ts
 +++ b/packages/api/gateway/src/client/stream-client.ts
-@@ -339,10 +339,16 @@ class StreamInbox {
-   }
- }
- 
-+function resolveBase(): string {
-+  const location = (globalThis as { location?: { origin?: string; href?: string } }).location
-+  if (location?.origin !== undefined && location.origin !== 'null') {
-+    return new URL('.', location.href ?? `${location.origin}/`).toString()
-+  }
-+  return `${INTERNAL_BASE}/`
-+}
-+
- function remoteStreamUrl(): string {
--  const location = (globalThis as { location?: { origin?: string } }).location
--  const base = location?.origin !== undefined && location.origin !== 'null' ? location.origin : INTERNAL_BASE
+@@ -305,7 +305,13 @@ function remoteStreamUrl(): string {
+   const location = (globalThis as { location?: { origin?: string } }).location
+   const transport = (globalThis as { __DSH_TRANSPORT__?: { streamBaseUrl?: string } }).__DSH_TRANSPORT__
+   const base = transport?.streamBaseUrl ?? (location?.origin !== undefined && location.origin !== 'null' ? location.origin : INTERNAL_BASE)
 -  const url = new URL(REMOTE_STREAM_MUX_PATH, base)
-+  const url = new URL(REMOTE_STREAM_MUX_PATH.replace(/^\/+/, ''), resolveBase())
++  const page = (globalThis as { location?: { href?: string } }).location
++  const resolvedBase = transport?.streamBaseUrl !== undefined
++    ? base.replace(/\/+$/u, '') + '/'
++    : location?.origin !== undefined && location.origin !== 'null'
++      ? new URL('.', page?.href ?? location.origin + '/').toString()
++      : INTERNAL_BASE + '/'
++  const url = new URL(REMOTE_STREAM_MUX_PATH.replace(/^\/+/, ''), resolvedBase)
    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
    return url.href
  }
 diff --git a/packages/api/gateway/tests/gateway.client.spec.ts b/packages/api/gateway/tests/gateway.client.spec.ts
-index 3122fbffd..8e97ae909 100644
+index 55e0b1d137..86d1762ff4 100644
 --- a/packages/api/gateway/tests/gateway.client.spec.ts
 +++ b/packages/api/gateway/tests/gateway.client.spec.ts
-@@ -2089,7 +2089,7 @@ describe('Client Typert API', () => {
+@@ -2343,7 +2343,7 @@ describe('Client Typert API', () => {
      ;(globalThis as WebSocketGlobal).WebSocket = FakeWebSocket as unknown as typeof WebSocket
      Object.defineProperty(globalThis, 'location', {
        configurable: true,
@@ -100,7 +95,7 @@ index 3122fbffd..8e97ae909 100644
      })
      FakeWebSocket.sockets.length = 0
      const call = vi.fn<ConnectionHandle['rpc']['call']>()
-@@ -2101,7 +2101,7 @@ describe('Client Typert API', () => {
+@@ -2355,7 +2355,7 @@ describe('Client Typert API', () => {
        const firstItem = first.next()
        await vi.waitFor(() => { expect(FakeWebSocket.sockets[0]?.sent).toHaveLength(1) })
        const socket = FakeWebSocket.sockets[0]!
@@ -110,7 +105,7 @@ index 3122fbffd..8e97ae909 100644
        expect(opened).toMatchObject({
          type: 'open',
 diff --git a/packages/client/connection/src/client/rpc.ts b/packages/client/connection/src/client/rpc.ts
-index 2c3f7d3e2..90f90aff9 100644
+index 2c3f7d3e28..90f90aff9f 100644
 --- a/packages/client/connection/src/client/rpc.ts
 +++ b/packages/client/connection/src/client/rpc.ts
 @@ -41,7 +41,7 @@ export function createWebConnectionRpc(doFetch?: RpcFetch, openStream?: RpcStrea
@@ -141,27 +136,27 @@ index 2c3f7d3e2..90f90aff9 100644
  
  function assertTarget(channel: string, endpoint: string): void {
 diff --git a/packages/client/connection/tests/client-apply.client.spec.ts b/packages/client/connection/tests/client-apply.client.spec.ts
-index e317c78f0..8c68c07ec 100644
+index 084f037135..40b94d9ab1 100644
 --- a/packages/client/connection/tests/client-apply.client.spec.ts
 +++ b/packages/client/connection/tests/client-apply.client.spec.ts
-@@ -12,7 +12,7 @@ import {
+@@ -15,7 +15,7 @@ import {
  } from '../src/client/index.ts'
  
  type Win = {
--  location?: { hostname: string; search: string; origin?: string }
-+  location?: { hostname: string; search: string; origin?: string; href?: string }
+-  location?: { hostname: string; origin?: string }
++  location?: { hostname: string; origin?: string; href?: string }
    __DSH_TRANSPORT__?: ClientTransportHooks
  }
  
-@@ -324,6 +324,7 @@ describe('connection client apply', () => {
+@@ -532,6 +532,7 @@ describe('connection client apply', () => {
    it('validates generic RPC transport failures, correlation, and targets', async () => {
      ;(globalThis as Win).location = {
-       hostname: 'harness.example', search: '', origin: 'https://harness.example',
+       hostname: 'harness.example', origin: 'https://harness.example',
 +      href: 'https://harness.example/v1/web/node/',
      }
      const handle = await mount()
      const original = globalThis.fetch
-@@ -333,7 +334,7 @@ describe('connection client apply', () => {
+@@ -541,7 +542,7 @@ describe('connection client apply', () => {
        await expect(handle.rpc.call('/api', 'goals/create', {}, abort.signal))
          .rejects.toThrow('HTTP 503')
        expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -171,13 +166,13 @@ index e317c78f0..8c68c07ec 100644
        )
  
 diff --git a/packages/client/hmr/src/client/index.ts b/packages/client/hmr/src/client/index.ts
-index 66b0e9ad6..098a8894e 100644
+index 829ea3003d..354824d957 100644
 --- a/packages/client/hmr/src/client/index.ts
 +++ b/packages/client/hmr/src/client/index.ts
-@@ -64,10 +64,10 @@
+@@ -1,10 +1,10 @@
+ /** Web SSE transport for page-owned client entry reconciliation and rebuilt code replacement. */
  import type { Context } from '@deepseek-ai/cordis'
- import type { Entry, Loader } from '@deepseek-ai/cordis-plugin-loader'
- import type { PluginsEventFrame } from '../events.ts'
+ import type { PluginsEventParseResult } from '../events.ts'
 -import { EVENTS_ENDPOINT, parsePluginsEventFrame } from '../events.ts'
 +import { CLIENT_EVENTS_ENDPOINT, parsePluginsEventFrame } from '../events.ts'
  
@@ -187,7 +182,7 @@ index 66b0e9ad6..098a8894e 100644
  
  /** Cordis plugin name. */
  export const name = 'client-hmr'
-@@ -163,7 +163,7 @@ export function apply(ctx: Context): void {
+@@ -26,7 +26,7 @@ export function apply(ctx: Context): void {
    }
  
    ctx.effect(() => {
@@ -197,7 +192,7 @@ index 66b0e9ad6..098a8894e 100644
        let value: unknown
        try {
 diff --git a/packages/client/hmr/src/events.ts b/packages/client/hmr/src/events.ts
-index 06bf53db4..9d44bebf6 100644
+index 26609d2dc3..bb92a5ec45 100644
 --- a/packages/client/hmr/src/events.ts
 +++ b/packages/client/hmr/src/events.ts
 @@ -42,3 +42,6 @@ export function parsePluginsEventFrame(value: unknown): PluginsEventParseResult
@@ -208,48 +203,62 @@ index 06bf53db4..9d44bebf6 100644
 +/** Browser-relative form; survives mounting the page below a path prefix. */
 +export const CLIENT_EVENTS_ENDPOINT = './plugins/events'
 diff --git a/packages/client/modules/src/index.ts b/packages/client/modules/src/index.ts
-index 98b6fa501..0ce852392 100644
+index 4b59882f13..aa852e3945 100644
 --- a/packages/client/modules/src/index.ts
 +++ b/packages/client/modules/src/index.ts
-@@ -170,7 +170,12 @@ interface ComboArtifactBase {
- /** One generated combo response over an ordered list of plugin resources. */
- interface ComboArtifact extends ComboArtifactBase {
-   sourceMap: Buffer
-+  /** Server-absolute combo key for the registered `/plugins` route. */
-   sourceMapUrl: string
-+  /** Server-absolute script key for the registered `/plugins` route. */
+@@ -159,9 +159,14 @@ interface LazyResponse {
+ /** Fields shared by every generated combo plan. */
+ interface ComboArtifact {
+   url: string
++  /** Server-absolute combo key used by the registered /plugins route. */
 +  serverUrl: string
-+  /** Server-absolute map key for the registered `/plugins` route. */
-+  serverSourceMapUrl: string
+   rev: string
+   entries: string[]
++  /** Server-absolute source-map key used by the registered /plugins route. */
+   sourceMapUrl: string
++  /** Browser-relative source-map URL embedded in the script. */
++  scriptSourceMapUrl: string
+   scriptBody: () => Promise<Buffer>
+   sourceMapBody: () => Promise<Buffer>
+ }
+@@ -213,10 +218,25 @@ function artifactRevision(bundle: Buffer, baseline: ClientArtifactBaseline): str
+   return framedHash('plugin-artifact', [bundle, Buffer.from(String(baseline.mtimeMs))])
  }
  
- /** One generated initial-load response and its wire descriptor. */
-@@ -251,14 +256,28 @@ function artifactRevision(bundle: Buffer, sourceMap: WebPluginRecord['sourceMap'
- }
- 
- /** Address one ordered plugin-file list through the shared combo route. */
+-/** Address one ordered plugin-file list through the shared combo route. */
 -function comboUrl(ids: readonly string[], rev: string, sourceMap = false): string {
--  const resources = ids.map(id => `${id}/client.js${sourceMap ? '.map' : ''}`).join(',')
--  return `/plugins/??${resources}&rev=${rev}`
++/** Resource query shared by browser-relative and server-absolute combo URLs. */
 +function comboResources(ids: readonly string[], sourceMap = false): string {
-+  return ids.map(id => `${id}/client.js${sourceMap ? '.map' : ''}`).join(',')
+   const resources = ids.map(id => `${id}/client.js${sourceMap ? '.map' : ''}`).join(',')
+-  return `/plugins/??${resources}&rev=${rev}`
++  return resources
 +}
 +
-+/** Browser-relative combo URL: the page is relocatable below a Hub mount prefix. */
++/** Browser-relative combo URL; survives mounting the page below a path prefix. */
 +function browserComboUrl(ids: readonly string[], rev: string, sourceMap = false): string {
 +  return `./plugins/??${comboResources(ids, sourceMap)}&rev=${rev}`
 +}
 +
-+/** Server-absolute route key used by the registered `/plugins` handler. */
++/** Server-absolute route key used by the registered /plugins handler. */
 +function serverComboUrl(ids: readonly string[], rev: string, sourceMap = false): string {
 +  return `/plugins/??${comboResources(ids, sourceMap)}&rev=${rev}`
 +}
 +
-+/** Source-map URL relative to the combo script itself, not to its document. */
++/** Source-map URL relative to the combo script itself, not to the document. */
 +function scriptRelativeComboMapUrl(ids: readonly string[], rev: string): string {
 +  return `??${comboResources(ids, true)}&rev=${rev}`
  }
  
+ /** Address one package-local chunk through the same revision as its entry. */
+@@ -224,9 +244,14 @@ function chunkUrl(id: string, fileName: string, rev: string, sourceMap = false):
+   return `/plugins/${id}/${fileName}${sourceMap ? '.map' : ''}?rev=${rev}`
+ }
+ 
++/** Source-map URL relative to a package-local chunk script. */
++function scriptRelativeChunkMapUrl(fileName: string, rev: string): string {
++  return `${fileName}.map?rev=${rev}`
++}
++
  /** Measure the longer map-form URL used to partition a startup resource list. */
  function projectedComboUrlBytes(records: readonly WebPluginRecord[]): number {
 -  return Buffer.byteLength(comboUrl(
@@ -257,31 +266,29 @@ index 98b6fa501..0ce852392 100644
      records.map(record => record.entry.id),
      COMBO_REVISION_PLACEHOLDER,
      true,
-@@ -399,9 +418,20 @@ function buildCombo(records: readonly WebPluginRecord[], revision?: string): Com
-   const sourceBytes = Buffer.from(source)
-   const rev = revision ?? framedHash('combo', [sourceBytes, sourceMap])
-   const entries = records.map(record => record.entry.id)
+@@ -410,14 +435,18 @@ function buildCombo(
+   }))
+   const rev = revision ?? comboRevision(resources)
+   const entries = resources.map(resource => resource.id)
 -  const url = comboUrl(entries, rev)
 -  const sourceMapUrl = comboUrl(entries, rev, true)
--  return { url, rev, entries, script: comboScript(source, sourceMapUrl), sourceMap, sourceMapUrl }
 +  const url = browserComboUrl(entries, rev)
 +  const serverUrl = serverComboUrl(entries, rev)
-+  const sourceMapScriptUrl = scriptRelativeComboMapUrl(entries, rev)
-+  const serverSourceMapUrl = serverComboUrl(entries, rev, true)
-+  return {
-+    url,
-+    rev,
-+    entries,
-+    script: comboScript(source, sourceMapScriptUrl),
-+    sourceMap,
-+    sourceMapUrl: serverSourceMapUrl,
++  const sourceMapUrl = serverComboUrl(entries, rev, true)
++  const scriptSourceMapUrl = scriptRelativeComboMapUrl(entries, rev)
+   return {
+     url,
 +    serverUrl,
-+    serverSourceMapUrl,
-+  }
+     rev,
+     entries,
+     sourceMapUrl,
+-    scriptBody: lazyBody(() => buildComboScript(resources, sourceMapUrl)),
++    scriptSourceMapUrl,
++    scriptBody: lazyBody(() => buildComboScript(resources, scriptSourceMapUrl)),
+     sourceMapBody: lazyBody(() => buildComboSourceMap(resources, sourceMapOf)),
+   }
  }
- 
- /** Add initial-load scheduling metadata to a combo artifact. */
-@@ -417,7 +447,7 @@ function buildBatch(phase: WebBootBatchPhase, records: readonly WebPluginRecord[
+@@ -439,7 +468,7 @@ function buildBatch(
  function graphRow(id: string, rev: string, fields: WebBootRowFields): WebBootEntry {
    return {
      id,
@@ -290,36 +297,44 @@ index 98b6fa501..0ce852392 100644
      rev,
      ...(fields.inject !== undefined ? { inject: fields.inject } : {}),
      ...(fields.immediately ? { immediately: true } : {}),
-@@ -695,11 +725,11 @@ export class ClientModuleRegistry extends Service {
+@@ -735,7 +764,7 @@ export class ClientModuleRegistry extends Service {
  
-     const batchResponses = new Map<string, { body: Buffer; contentType: string }>()
+     const batchResponses = new Map<string, LazyResponse>()
      for (const artifact of artifacts) {
--      batchResponses.set(artifact.descriptor.url, {
-+      batchResponses.set(artifact.serverUrl, {
-         body: artifact.script,
+-      batchResponses.set(artifact.descriptor.url, this.responses.get(artifact.descriptor.url) ?? {
++      batchResponses.set(artifact.serverUrl, this.responses.get(artifact.serverUrl) ?? {
+         body: artifact.scriptBody,
          contentType: 'text/javascript; charset=utf-8',
        })
--      batchResponses.set(artifact.sourceMapUrl, {
-+      batchResponses.set(artifact.serverSourceMapUrl, {
-         body: artifact.sourceMap,
-         contentType: 'application/json; charset=utf-8',
-       })
-@@ -707,11 +737,11 @@ export class ClientModuleRegistry extends Service {
+@@ -747,7 +776,7 @@ export class ClientModuleRegistry extends Service {
      const responses = new Map(batchResponses)
      for (const record of this.table.values()) {
-       const artifact = buildCombo([record], record.entry.rev)
--      responses.set(artifact.url, {
-+      responses.set(artifact.serverUrl, {
-         body: artifact.script,
+       const artifact = buildCombo([record], this.readSourceMap, record.entry.rev)
+-      responses.set(artifact.url, responses.get(artifact.url) ?? this.responses.get(artifact.url) ?? {
++      responses.set(artifact.serverUrl, responses.get(artifact.serverUrl) ?? this.responses.get(artifact.serverUrl) ?? {
+         body: artifact.scriptBody,
          contentType: 'text/javascript; charset=utf-8',
        })
--      responses.set(artifact.sourceMapUrl, {
-+      responses.set(artifact.serverSourceMapUrl, {
-         body: artifact.sourceMap,
+@@ -1067,7 +1096,7 @@ export class ClientModuleRegistry extends Service {
+     const { record, fileName, sourceMap, resourceUrl } = request
+     const clientPath = join(dirname(record.meta.clientPath), fileName)
+     if (!existsSync(clientPath)) return undefined
+-    const sourceMapUrl = chunkUrl(record.entry.id, fileName, record.entry.rev, true)
++    const scriptSourceMapUrl = scriptRelativeChunkMapUrl(fileName, record.entry.rev)
+     const resource = (): ComboResource => ({
+       id: record.entry.id,
+       rev: record.entry.rev,
+@@ -1081,7 +1110,7 @@ export class ClientModuleRegistry extends Service {
          contentType: 'application/json; charset=utf-8',
-       })
+       }
+       : {
+-        body: lazyBody(() => buildComboScript([resource()], sourceMapUrl)),
++        body: lazyBody(() => buildComboScript([resource()], scriptSourceMapUrl)),
+         contentType: 'text/javascript; charset=utf-8',
+       }
+     this.responses.set(resourceUrl, response)
 diff --git a/packages/client/modules/tests/node-half.client.spec.ts b/packages/client/modules/tests/node-half.client.spec.ts
-index 5553c94c8..61f48951d 100644
+index 0446cb2687..843fbc0a5c 100644
 --- a/packages/client/modules/tests/node-half.client.spec.ts
 +++ b/packages/client/modules/tests/node-half.client.spec.ts
 @@ -18,8 +18,9 @@ const MODULES_ID = '@deepseek-ai/dsh-client-modules'
@@ -330,20 +345,20 @@ index 5553c94c8..61f48951d 100644
 +  `./plugins/??${ids.map(id => `${id}/client.js`).join(',')}&rev=${rev}`
  const mapUrl = (url: string): string => url.replace(/\/client\.js(?=,|&rev=)/g, '/client.js.map')
 +const scriptMapUrl = (url: string): string => mapUrl(url).replace(/^\.\/plugins\//, '')
+ const chunkUrl = (id: string, fileName: string, rev: string): string => `/plugins/${id}/${fileName}?rev=${rev}`
  const BOOTSTRAP_URL = comboUrl([MODULES_ID], 'boot')
  const APPLICATION_URL = comboUrl([UI_RENDERER_ID], 'app')
- 
-@@ -121,7 +122,8 @@ async function routeRequest(route: WebRoute, url: string, method = 'GET'): Promi
+@@ -162,7 +163,8 @@ async function routeRequest(route: Promise<WebRoute>, url: string, method = 'GET
        return response
      },
    } as unknown as ServerResponse
--  await route.handler({ method, url } as IncomingMessage, response)
+-  await (await route).handler({ method, url } as IncomingMessage, response)
 +  const wireUrl = url.startsWith('./') ? url.slice(1) : url
-+  await route.handler({ method, url: wireUrl } as IncomingMessage, response)
++  await (await route).handler({ method, url: wireUrl } as IncomingMessage, response)
    return { status, headers, body }
  }
  
-@@ -459,7 +461,7 @@ describe('client bundle activation', () => {
+@@ -500,7 +502,7 @@ describe('client bundle activation', () => {
      const torn = constructWithRoute([packageName])
      const tornRow = torn.service.graph().entries[0]!
      expect((await routeRequest(torn.route, tornRow.url)).body.toString('utf8'))
@@ -352,7 +367,7 @@ index 5553c94c8..61f48951d 100644
      const fallback = await routeRequest(torn.route, mapUrl(torn.service.graph().batches[0]!.url))
      expect(JSON.parse(fallback.body.toString('utf8'))).toMatchObject({
        sections: [{ map: { sources: [`/plugins/${packageName}/client.js`] } }],
-@@ -484,7 +486,7 @@ describe('client bundle activation', () => {
+@@ -611,7 +613,7 @@ describe('client bundle activation', () => {
      const batch = service.graph().batches[0]!
      const script = (await routeRequest(route, batch.url)).body.toString('utf8')
      expect(script).not.toContain('//# sourceURL=')
@@ -361,7 +376,7 @@ index 5553c94c8..61f48951d 100644
      const payload = JSON.parse((await routeRequest(route, mapUrl(batch.url))).body.toString('utf8')) as {
        sections: { map: { mappings: string; sources: string[]; sourcesContent: string[] } }[]
      }
-@@ -603,7 +605,7 @@ describe('client bundle activation', () => {
+@@ -730,7 +732,7 @@ describe('client bundle activation', () => {
      const { service, route } = constructWithRoute([packageName])
      const row = service.graph().entries[0]!
      const singleScript = await routeRequest(route, row.url)
@@ -370,39 +385,38 @@ index 5553c94c8..61f48951d 100644
      const singleMap = await routeRequest(route, mapUrl(row.url))
      expect(singleMap.status).toBe(200)
      expect(singleMap.headers).toEqual({
-@@ -627,7 +629,7 @@ describe('client bundle activation', () => {
+@@ -754,7 +756,7 @@ describe('client bundle activation', () => {
      const batchScript = await routeRequest(route, batch.url)
      expect(batchScript.status).toBe(200)
      expect(batchScript.headers?.['cache-control']).toBe('public, max-age=31536000, immutable')
 -    expect(batchScript.body.toString('utf8')).toContain(`//# sourceMappingURL=${mapUrl(batch.url)}`)
 +    expect(batchScript.body.toString('utf8')).toContain(`//# sourceMappingURL=${scriptMapUrl(batch.url)}`)
-     const shellResponse = service.fetchBundle(new Request(`dsh-app://app${batch.url}`))
+     const shellResponse = await service.fetchBundle(new Request(`dsh-app://app${batch.url}`))
      expect(shellResponse.status).toBe(200)
      expect(shellResponse.headers.get('cache-control')).toBe('public, max-age=31536000, immutable')
-@@ -754,7 +756,7 @@ describe('shared module declarations', () => {
-     writeBuiltPackage(packageName, { external: ['react'] })
-     expect(construct([packageName]).graph().entries).toEqual([{
-       id: packageName,
--      url: expect.stringContaining(`/plugins/??${packageName}/client.js&rev=`) as unknown as string,
-+      url: expect.stringContaining(`./plugins/??${packageName}/client.js&rev=`) as unknown as string,
-       rev: expect.any(String) as unknown as string,
-       external: ['react'],
-     }])
+@@ -810,7 +812,7 @@ describe('client bundle activation', () => {
+     const chunk = await routeRequest(route, url)
+     expect(chunk.status).toBe(200)
+     expect(chunk.body.toString('utf8')).toContain('terminal loaded')
+-    expect(chunk.body.toString('utf8')).toContain(`sourceMappingURL=${url.replace('.js?', '.js.map?')}`)
++    expect(chunk.body.toString('utf8')).toContain(`sourceMappingURL=client.terminal.js.map?rev=${row.rev}`)
+     expect((await routeRequest(route, url.replace('.js?', '.js.map?'))).status).toBe(200)
+     expect((await routeRequest(route, url.replace(`rev=${row.rev}`, 'rev=stale'))).status).toBe(404)
+   })
 diff --git a/packages/host/frontend-static/src/index.ts b/packages/host/frontend-static/src/index.ts
-index 3d218f31e..2d882da07 100644
+index 3d218f31e6..d7360e63c1 100644
 --- a/packages/host/frontend-static/src/index.ts
 +++ b/packages/host/frontend-static/src/index.ts
-@@ -114,12 +114,13 @@ export function apply(ctx: Context, config: Config): void {
+@@ -114,12 +114,12 @@ export function apply(ctx: Context, config: Config): void {
    const distIndex = config.distIndex
    const distRoot = dirname(distIndex)
    // The dist is built with a relative base so the same files mount under any
 -  // static directory; served pages also answer deep SPA-fallback paths, where
 -  // relative asset URLs would resolve under the request directory, so the
 -  // served form anchors them at the site root ahead of every URL-bearing tag.
-+  // static directory. The served form must not anchor URLs at the origin root:
-+  // a Hub-mounted page lives below /v1/web/<node>/ and a root <base href> would
-+  // make every relative asset/RPC/plugin URL escape the mount prefix. A
-+  // relative base keeps the same files working at the site root as well.
++  // static directory. The served form must preserve that relative base:
++  // Hub-mounted pages live below /v1/web/<node>/, and an origin-root base would
++  // make asset, RPC, and plugin URLs escape the mount prefix.
    const renderIndex = async (): Promise<string> => {
      const body = ctx.webServer.renderIndex(await readFile(distIndex, 'utf8'))
 -    return body.replace(/<head(?:\s[^>]*)?>/i, open => `${open}<base href="/">`)

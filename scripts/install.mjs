@@ -88,7 +88,7 @@ function parseArgs(argv) {
     withHost: process.env.COMBO_WITH_HOST === '1',
     withHostExplicit: process.env.COMBO_WITH_HOST === '1',
     dshPackage: process.env.COMBO_DSH_PACKAGE || publishedDsh.package || '@deepseek-ai/dsh',
-    dshVersion: process.env.COMBO_DSH_VERSION || publishedDsh.version || '0.1.5-rc.2',
+    dshVersion: process.env.COMBO_DSH_VERSION || publishedDsh.version || '0.1.6-alpha.2',
     pluginSpec: process.env.COMBO_AGENT_PLUGIN || publishedPlugin.package || '@agent-society/dsh-agent-society',
     dryRun: false,
     yes: false,

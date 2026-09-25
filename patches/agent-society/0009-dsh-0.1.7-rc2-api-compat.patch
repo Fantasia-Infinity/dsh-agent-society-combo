@@ -1,0 +1,51 @@
+diff --git a/dsh-plugin/src/prompt-guard.ts b/dsh-plugin/src/prompt-guard.ts
+index 2433e1adf1bce6b9920a2413efa3fab9774e8a2d..3ed949e0e785e481948b0af46a0845bf2b894274 100644
+--- a/dsh-plugin/src/prompt-guard.ts
++++ b/dsh-plugin/src/prompt-guard.ts
+@@ -15,6 +15,11 @@
+ 
+ import type { Context } from '@deepseek-ai/cordis'
+ import { createUserMessage } from '@deepseek-ai/dsh-llm'
++declare module '@deepseek-ai/dsh-llm' {
++  interface MessageSourceMap {
++    'agent-society-directory-index': { kind: 'agent-society-directory-index' }
++  }
++}
+ import { homedir } from 'node:os'
+ import { join, resolve } from 'node:path'
+ 
+@@ -100,8 +105,7 @@ export function apply(ctx: Context): void {
+             createUserMessage({
+               content: [{ type: 'text', text: update.text }],
+               source: {
+-                kind: 'plugin',
+-                plugin: '@agent-society/dsh-agent-society',
++                kind: 'agent-society-directory-index',
+               },
+             }),
+           ],
+diff --git a/dsh-plugin/src/summarizer.ts b/dsh-plugin/src/summarizer.ts
+index b975d69d0ba34aa6d85496500b9eeb26ba78c5f9..74dfcd8d0afa7102dcbef17be539975607fea712 100644
+--- a/dsh-plugin/src/summarizer.ts
++++ b/dsh-plugin/src/summarizer.ts
+@@ -104,7 +104,7 @@ export async function summarizeLiveSession(options: {
+   // Since dsh 0.1.5 the system prompt is a durable `system/message` in the
+   // session surface and therefore already appears in `history`. Keep reading
+   // the retired field only for older callers/test doubles.
+-  const legacySystem = (requestHeader as EpochHeader & { system?: unknown }).system
++  const legacySystem = (requestHeader as unknown as { system?: unknown }).system
+   const stream = prepared.stream({
+     ...prepared.config,
+     messages: [...history, instruction],
+diff --git a/dsh-plugin/test/shared-context.test.mjs b/dsh-plugin/test/shared-context.test.mjs
+index c821f6a52f317f27b82b0866e8e4b5ce6b14e72c..1877c4916a48895cba026935b9cf228355dcd36b 100644
+--- a/dsh-plugin/test/shared-context.test.mjs
++++ b/dsh-plugin/test/shared-context.test.mjs
+@@ -293,6 +293,7 @@ test('balanced prompt guard appends initial and delta messages without a series
+     const payload = { agent: { session: { id: 'mine' } }, turn: 1, step: 1, signal: new AbortController().signal }
+     const initial = await handler(payload, async () => ({ ...base, messages: [] }))
+     assert.equal(initial.messages.length, 1)
++    assert.equal(initial.messages[0].source.kind, 'agent-society-directory-index')
+     assert.ok(initial.messages[0].content[0].text.includes('初始快照'))
+     assert.equal(initial.startsRequestSeries, undefined)
+     const unchanged = await handler(payload, async () => ({ ...base, messages: [] }))

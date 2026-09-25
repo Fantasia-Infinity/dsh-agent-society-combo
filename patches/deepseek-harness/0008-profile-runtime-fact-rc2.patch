@@ -1,15 +1,15 @@
 diff --git a/apps/cli/src/bin.ts b/apps/cli/src/bin.ts
-index 7ca9f302e1..88d6471c06 100644
+index 20f5867e23e07914d26ed124286d83ea68936eae..30890fe608f435bc0a66e8973931864a0967ade5 100644
 --- a/apps/cli/src/bin.ts
 +++ b/apps/cli/src/bin.ts
-@@ -31,6 +31,11 @@ export async function runCli(): Promise<void> {
-   const version = readVersion()
+@@ -19,6 +19,11 @@ export async function runCli(): Promise<void> {
+   const version = getDshRuntimeVersion()
    const invocation = parseDshArgs(process.argv.slice(2), version)
  
 +  // Expose the selected profile to profile bundles as a launch-scoped fact.
 +  // This keeps worker activation profile-local without putting
 +  // AGENT_SOCIETY_WORKER=1 in the global $DSH_HOME/.env.
-+  if ('profile' in invocation) process.env.DSH_PROFILE = invocation.profile
++  if (invocation.mode === 'profile') process.env.DSH_PROFILE = invocation.profile
 +
    switch (invocation.mode) {
      case 'profile': {

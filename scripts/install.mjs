@@ -88,7 +88,7 @@ function parseArgs(argv) {
     withHost: process.env.COMBO_WITH_HOST === '1',
     withHostExplicit: process.env.COMBO_WITH_HOST === '1',
     dshPackage: process.env.COMBO_DSH_PACKAGE || publishedDsh.package || '@deepseek-ai/dsh',
-    dshVersion: process.env.COMBO_DSH_VERSION || publishedDsh.version || '0.1.6-alpha.2',
+    dshVersion: process.env.COMBO_DSH_VERSION || publishedDsh.version || '0.1.7-rc.2',
     pluginSpec: process.env.COMBO_AGENT_PLUGIN || publishedPlugin.package || '@agent-society/dsh-agent-society',
     dryRun: false,
     yes: false,
@@ -741,7 +741,10 @@ async function installDependencies(harness, tui, agentSociety, openCodeFull, cha
 }
 
 function installTuiBootstrapDependencies(tui) {
-  const files = ['package.json', 'pnpm-lock.yaml']
+  // The source compatibility patch updates the workspace overrides as well
+  // as package.json and pnpm-lock.yaml. Bootstrap against the exact upstream
+  // trio, then restore all patched files before linking the sibling DSH tree.
+  const files = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml']
   const originals = new Map()
   const pinned = new Map()
   for (const file of files) {

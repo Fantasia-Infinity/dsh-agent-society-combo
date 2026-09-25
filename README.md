@@ -19,26 +19,27 @@
 
 | 组件 | 固定 commit |
 |---|---|
-| deepseek-harness | `cb3d0753c08791ccc57a140086d6902b331049ff` |
-| dsh-TUI | `64e621508d12ac2c859b7ccc0af24cd2c2072359` |
+| deepseek-harness | `e11c574ada805aebd587262a1635fab2743c586e` |
+| dsh-TUI | `1062bbb0ad608b2fe6adfa9001aa1038144764b7` |
 | AgentSociety | `03fe4f7` |
 | dsh-anchored-standard | `dda23ef119e3715f417d73f72eca407732846d1a` |
 | dsh-opencode-full（可选） | `f4d4dda7c2ab8032ed169a770db3594cf98ea638` |
 
-发布版运行时绑定：`@deepseek-ai/dsh@0.1.6-alpha.2`，来源为
+发布版运行时绑定：`@deepseek-ai/dsh@0.1.7-rc.2`，来源为
 `Fantasia-Infinity/deepseek-harness`（对应已发布 commit
-`cb3d0753c08791ccc57a140086d6902b331049ff`）；AgentSociety 插件为
+`e11c574ada805aebd587262a1635fab2743c586e`）；AgentSociety 插件为
 `@agent-society/dsh-agent-society`。Combo 会分别校验 npm 与 source 模式的 dsh
 版本；两种模式的差异只通过显式 `--source` 选择，不会静默混用。
 
-注意：上游 fork 的源码适配已前移到 `cb3d0753c08791ccc57a140086d6902b331049ff`
-并用于显式 `combo install --source`；默认 npm 模式使用该 fork 已包含的
-`0.1.6-alpha.2` 发布提交。实验性的 Agent Teams 保持上游默认关闭，不加入 Combo profile。
+源码模式针对该 fork 的适配保留为最小补丁：上游已原生支持 Web 反向代理子路径，
+Combo 不再重复打旧的 Web base-path patch；仅补回 worker profile 启动时需要的
+profile-local runtime 标记。实验性的 Agent Teams 保持上游默认关闭，不加入 Combo profile。
 
-dsh-TUI `0.10.2` 已对齐 dsh `0.1.6-alpha.2`。源码模式会初始化它新增的
+dsh-TUI `0.11.0` 已对齐 dsh `0.1.7-rc.2`。源码模式会初始化它新增的
 `dsh-auth` / `dsh-std` 子模块，并使用 Combo 的 sibling-checkout build 与独立
-source launcher patch；alpha2 版本契约通过 Combo patch 保留既有 prerelease 向后兼容。该适配只覆盖 TUI 启动和
-构建链，不启用 Agent Teams，也不修改 TUI 上游源码。
+source launcher patch；rc2 契约 patch 同步更新 workspace overrides、依赖锁和版本验证，
+同时保留对 rc1 的兼容。该适配只覆盖 TUI 启动和构建链，不启用 Agent Teams，也不修改
+TUI 上游源码。
 
 默认 TUI preset：`anchored-standard`。`standard` / `ptc` / `minimal` /
 `cordis` 仍保留可选（安装时 `--preset standard`，或 TUI 内 `/preset`）。
@@ -76,7 +77,7 @@ AGENT_DSH_WEB_BRIDGE_START=0  # 禁用自动启动，要求已有 DSH Web
 先安装当前 fork 对应的 dsh 发布包：
 
 ```bash
-npm install -g @deepseek-ai/dsh@0.1.6-alpha.2
+npm install -g @deepseek-ai/dsh@0.1.7-rc.2
 ```
 
 然后添加 AgentSociety 插件到三个彼此隔离的 profile：
@@ -242,7 +243,7 @@ bridge 会等待本地 DSH Web 就绪、注册 `dsh_web` 节点能力，并转�
 npm 模式下更新由 dsh/npm 管理，不在 `node_modules` 或安装目录执行 Git 更新：
 
 ```bash
-npm install -g @deepseek-ai/dsh@0.1.6-alpha.2 @agent-society/agent-host
+npm install -g @deepseek-ai/dsh@0.1.7-rc.2 @agent-society/agent-host
 agent update                         # 更新 dsh、Host、三个 dsh profile 插件
 combo install --update               # 也可以只更新 AgentSociety 插件
 ```

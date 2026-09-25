@@ -2,22 +2,18 @@
   "checksums": {},
   "components": {
     "deepseek-harness": {
-      "commit": "cb3d0753c08791ccc57a140086d6902b331049ff",
+      "commit": "e11c574ada805aebd587262a1635fab2743c586e",
       "files": [],
       "patches": [
         {
-          "path": "patches/deepseek-harness/0004-native-web-base-path.patch",
-          "sha256": "4d389eea983edc2c0dd82f1662f9b48d39fb2758895478dfb2ce56f8007d5c7f"
-        },
-        {
-          "path": "patches/deepseek-harness/0007-profile-runtime-fact.patch",
-          "sha256": "58cb8086398790f2dbbf9fcdef2deca42b7fcc9dd67aa605d49e12fd23ccc7ff"
+          "path": "patches/deepseek-harness/0008-profile-runtime-fact-rc2.patch",
+          "sha256": "a828f5840f6a94c82aa0baa4dacd6df940ab383fd336f3dca1210ca51f2d672a"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/deepseek-harness.git"
     },
     "dsh-tui": {
-      "commit": "64e621508d12ac2c859b7ccc0af24cd2c2072359",
+      "commit": "1062bbb0ad608b2fe6adfa9001aa1038144764b7",
       "files": [
         {
           "dest": "bin/dsh-tui-local.js",
@@ -40,8 +36,8 @@
           "sha256": "1cf4ff6394578bb9af9383aa1b62e30e2442f76f5393c76bbf91355886244d0b"
         },
         {
-          "path": "patches/dsh-tui/0013-dsh-0.1.6-alpha2-contract.patch",
-          "sha256": "3a99d6518a9682a51e4722297a39d605dc19506ee62b707ebbaca534ec0e3690"
+          "path": "patches/dsh-tui/0014-dsh-0.1.7-rc2-contract.patch",
+          "sha256": "95c23847c47c3a68fe2cbc7806be3f84fa94a107b8ed5147ee08b2004de9a2d9"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/dsh-TUI.git"
@@ -73,6 +69,14 @@
         {
           "path": "patches/agent-society/0007-dsh-0.1.6-alpha2-package-pins.patch",
           "sha256": "e252cdc6cf303fcc7f80d9422c2a3c5a114334f550549e13048502d90a5453bb"
+        },
+        {
+          "path": "patches/agent-society/0008-dsh-0.1.7-rc2-package-pins.patch",
+          "sha256": "96c22e3835721c2d02e22459fb1fcb01897d0786c6e5c2ff5455a247d106ec5d"
+        },
+        {
+          "path": "patches/agent-society/0009-dsh-0.1.7-rc2-api-compat.patch",
+          "sha256": "a221b5008b3a3af407efd39076470667da73a92a4c90397946b2bc324a2708f9"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/AgentSociety.git"
@@ -94,9 +98,9 @@
   "published": {
     "dsh": {
       "package": "@deepseek-ai/dsh",
-      "version": "0.1.6-alpha.2",
+      "version": "0.1.7-rc.2",
       "source": "Fantasia-Infinity/deepseek-harness",
-      "commit": "cb3d0753c08791ccc57a140086d6902b331049ff"
+      "commit": "e11c574ada805aebd587262a1635fab2743c586e"
     },
     "agentSocietyPlugin": {
       "package": "@agent-society/dsh-agent-society",

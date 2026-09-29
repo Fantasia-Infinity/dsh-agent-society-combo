@@ -19,15 +19,15 @@
 
 | 组件 | 固定 commit |
 |---|---|
-| deepseek-harness | `e11c574ada805aebd587262a1635fab2743c586e` |
-| dsh-TUI | `1062bbb0ad608b2fe6adfa9001aa1038144764b7` |
+| deepseek-harness | `50bdc0bea9c23ea974146313ae77d0ca6d894596` |
+| dsh-TUI | `803d6234b692b2e1573db35e9995fe4d7e8473e6` |
 | AgentSociety | `03fe4f7` |
 | dsh-anchored-standard | `dda23ef119e3715f417d73f72eca407732846d1a` |
 | dsh-opencode-full（可选） | `f4d4dda7c2ab8032ed169a770db3594cf98ea638` |
 
-发布版运行时绑定：`@deepseek-ai/dsh@0.1.7-rc.2`，来源为
+发布版运行时绑定：`@deepseek-ai/dsh@0.2.0-rc.2`，来源为
 `Fantasia-Infinity/deepseek-harness`（对应已发布 commit
-`e11c574ada805aebd587262a1635fab2743c586e`）；AgentSociety 插件为
+`50bdc0bea9c23ea974146313ae77d0ca6d894596`）；AgentSociety 插件为
 `@agent-society/dsh-agent-society`。Combo 会分别校验 npm 与 source 模式的 dsh
 版本；两种模式的差异只通过显式 `--source` 选择，不会静默混用。
 
@@ -35,7 +35,7 @@
 Combo 不再重复打旧的 Web base-path patch；仅补回 worker profile 启动时需要的
 profile-local runtime 标记。实验性的 Agent Teams 保持上游默认关闭，不加入 Combo profile。
 
-dsh-TUI `0.11.0` 已对齐 dsh `0.1.7-rc.2`。源码模式会初始化它新增的
+dsh-TUI `0.11.2` 已对齐 dsh `0.2.0-rc.2`。源码模式会初始化它新增的
 `dsh-auth` / `dsh-std` 子模块，并使用 Combo 的 sibling-checkout build 与独立
 source launcher patch；rc2 契约 patch 同步更新 workspace overrides、依赖锁和版本验证，
 同时保留对 rc1 的兼容。该适配只覆盖 TUI 启动和构建链，不启用 Agent Teams，也不修改
@@ -77,7 +77,7 @@ AGENT_DSH_WEB_BRIDGE_START=0  # 禁用自动启动，要求已有 DSH Web
 先安装当前 fork 对应的 dsh 发布包：
 
 ```bash
-npm install -g @deepseek-ai/dsh@0.1.7-rc.2
+npm install -g @deepseek-ai/dsh@0.2.0-rc.2
 ```
 
 然后添加 AgentSociety 插件到三个彼此隔离的 profile：
@@ -243,7 +243,7 @@ bridge 会等待本地 DSH Web 就绪、注册 `dsh_web` 节点能力，并转�
 npm 模式下更新由 dsh/npm 管理，不在 `node_modules` 或安装目录执行 Git 更新：
 
 ```bash
-npm install -g @deepseek-ai/dsh@0.1.7-rc.2 @agent-society/agent-host
+npm install -g @deepseek-ai/dsh@0.2.0-rc.2 @agent-society/agent-host
 agent update                         # 更新 dsh、Host、三个 dsh profile 插件
 combo install --update               # 也可以只更新 AgentSociety 插件
 ```

@@ -33,7 +33,7 @@
         },
         {
           "path": "patches/dsh-tui/0015-dsh-0.2.0-rc2-contract.patch",
-          "sha256": "e17f47671fd4dc676ffad72e296ab8688c31171bcb6015f449bacf6b9517cd2a"
+          "sha256": "214d1800382a93c6b25feb4be287de03f85dc6eaf9392ba8f5ee1a898700ec10"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/dsh-TUI.git"

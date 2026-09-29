@@ -1,5 +1,5 @@
 diff --git a/ADAPTER.md b/ADAPTER.md
-index dac2fe1..cf64ccc 100644
+index dac2fe1efe468ebaa3ef17142882c0aa38bd66bf..cf64ccc7af2de3ce117fec3a6bda5c216f13a89e 100644
 --- a/ADAPTER.md
 +++ b/ADAPTER.md
 @@ -12,10 +12,10 @@ UI 层(`screens/`、`components/`、`ink/`、`hooks/`、`utils/`、`terminal-uti
@@ -25,7 +25,7 @@ index dac2fe1..cf64ccc 100644
    旧 SQLite 迁移工具的依赖闭包单独锁在 `vendor/sqlite-island`。
  - `contract.ts` 是唯一真源:主验证线原地替换、不累积;`package.json` 的
 diff --git a/README.md b/README.md
-index b35a724..a65eaf0 100644
+index b35a724413f8a695d59f7be84ce36bbeedb35bf8..a65eaf0b9943ef3bc2c9e1186c455c8ce7f30812 100644
 --- a/README.md
 +++ b/README.md
 @@ -83,7 +83,7 @@ Prerequisites: [Node.js](https://nodejs.org/en) and
@@ -38,7 +38,7 @@ index b35a724..a65eaf0 100644
  older supported hosts retain their compatibility paths. See [configuration](docs/configuration.en.md).
  
 diff --git a/README_ZH.md b/README_ZH.md
-index f8f6c75..8f3af2e 100644
+index f8f6c755dc0b73b8b73d5dc48de297e204857961..8f3af2e5e254d3c0745ac8ff513439a575fe830f 100644
 --- a/README_ZH.md
 +++ b/README_ZH.md
 @@ -77,7 +77,7 @@
@@ -51,7 +51,7 @@ index f8f6c75..8f3af2e 100644
  
  DSH 0.1.7 的 `/settings` 使用 TUI 实际的 Loader 行 ID，也支持自定义 ID。
 diff --git a/docs/user-guide.en.md b/docs/user-guide.en.md
-index 7fd4147..e61b2e0 100644
+index 7fd414729105d4a3e87c08a5d63059f314ecca9c..e61b2e0328145a6562188ac0c9afa1ad20918e2a 100644
 --- a/docs/user-guide.en.md
 +++ b/docs/user-guide.en.md
 @@ -30,7 +30,7 @@ dsh-tui
@@ -64,7 +64,7 @@ index 7fd4147..e61b2e0 100644
    `npm i -g @deepseek-ai/dsh@<版本>`
  
 diff --git a/docs/user-guide.md b/docs/user-guide.md
-index 870f197..325de77 100644
+index 870f197c4557a3110e07ecf4930d96e538b03566..325de77c4b32ddf834253fbddffc017a3de8163e 100644
 --- a/docs/user-guide.md
 +++ b/docs/user-guide.md
 @@ -30,7 +30,7 @@ dsh-tui
@@ -77,7 +77,7 @@ index 870f197..325de77 100644
  
  ### 1.2 首次启动你会看到
 diff --git a/package.json b/package.json
-index 5360e5b..12d5073 100644
+index 5360e5b0c98e0163599d0b6990e3886b48f2ddac..12d50732b1a8e1c687e1f870de3ffc62ed62c54b 100644
 --- a/package.json
 +++ b/package.json
 @@ -237,36 +237,36 @@
@@ -286,7 +286,7 @@ index 5360e5b..12d5073 100644
      "@types/lodash-es": "^4.17.0",
      "@types/node": "^26.4.0",
 diff --git a/patch-surface.snapshot.json b/patch-surface.snapshot.json
-index fb9cdc6..6b00136 100644
+index fb9cdc641ec18c881d6358ed049a156a875fbdce..6b00136f3bb44f0e45a96ef337d6b3e759dcea9e 100644
 --- a/patch-surface.snapshot.json
 +++ b/patch-surface.snapshot.json
 @@ -95,7 +95,7 @@
@@ -299,7 +299,7 @@ index fb9cdc6..6b00136 100644
        "webAppDisablesBeyondTui": [
          "tool-plugin-manager",
 diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
-index bfbb2ec..7add4bc 100644
+index bfbb2ec70aff6dbac2aeffeba12b91e26cacf4be..7add4bc0b09e140ba6b607aeb52c57c4b8096696 100644
 --- a/pnpm-lock.yaml
 +++ b/pnpm-lock.yaml
 @@ -5,36 +5,36 @@ settings:
@@ -6957,7 +6957,7 @@ index bfbb2ec..7add4bc 100644
    typescript@6.0.3: {}
  
 diff --git a/pnpm-workspace.yaml b/pnpm-workspace.yaml
-index da07158..0cf0d31 100644
+index da071583b8b95cfdf36648de562f20d4c4505b3b..0cf0d31692c0f469b4e983531e43272b050e1afa 100644
 --- a/pnpm-workspace.yaml
 +++ b/pnpm-workspace.yaml
 @@ -12,45 +12,45 @@ packages:
@@ -7118,8 +7118,113 @@ index da07158..0cf0d31 100644
    # pnpm 11's default 24h minimumReleaseAge; exempt the whole scope
    # (rollup R-08 recommends per-scope exemption over disabling; name
    # patterns cannot carry a version spec here).
+diff --git a/scripts/run.ts b/scripts/run.ts
+index b7436430cc4c7e53cba220509633e392f8e460ca..e505095aae9804ec36d31819818f2122ba7cf74a 100644
+--- a/scripts/run.ts
++++ b/scripts/run.ts
+@@ -7,7 +7,8 @@
+  * are designed for end-user web/headless profiles, not a developer workspace
+  * TUI.
+  */
+-import { existsSync, readFileSync, writeFileSync, unlinkSync, statSync, readdirSync, mkdirSync, rmSync, symlinkSync } from 'node:fs'
++import { existsSync, readFileSync, writeFileSync, unlinkSync, lstatSync, statSync, readdirSync, mkdirSync, rmSync, symlinkSync } from 'node:fs'
++import { createRequire } from 'node:module'
+ import { resolve, join, dirname } from 'node:path'
+ import { homedir } from 'node:os'
+ import { fileURLToPath, pathToFileURL } from 'node:url'
+@@ -47,15 +48,18 @@ const appBootPath = resolve(workspace, 'packages/boot/app-boot/lib/index.js')
+ if (!existsSync(appBootPath)) {
+   throw new Error(`Cannot find the built dsh-app-boot package at ${appBootPath}. Build the Harness checkout first.`)
+ }
++const appBoot = await import(pathToFileURL(appBootPath).href)
+ const {
+   boot,
+   composeEntries,
+-  healProfilesModuleFallback,
+   installFailLoud,
+   loadLayeredEnv,
+   loadOverlayPatches,
+   watchUserPatches,
+-} = await import(pathToFileURL(appBootPath).href)
++} = appBoot
++const legacyHealProfilesModuleFallback = (appBoot as typeof appBoot & {
++  healProfilesModuleFallback?: (options: { installAnchor: string }) => Promise<void>
++}).healProfilesModuleFallback
+ const dshHome = process.env.DSH_HOME
+ const profileDir = join(dshHome, 'profiles', 'dsh-tui')
+ const rootConfig = join(profileDir, 'cordis.yml')
+@@ -104,6 +108,48 @@ if (process.env.DSH_TUI_HEAP_WATCH !== '0') {
+ // $DSH_HOME/profiles/node_modules so every in-box plugin resolves.
+ const INSTALL_ANCHOR = resolve(workspace, 'apps/cli/package.json')
+ 
++/** Recreate the pre-0.2.0 shared module fallback when the old dsh helper is absent. */
++async function rebuildProfilesModuleFallback(installAnchor: string): Promise<void> {
++  mkdirSync(profilesNm, { recursive: true })
++  const resolvePackageDir = (anchor: string, name: string): string | undefined => {
++    for (const searchPath of createRequire(anchor).resolve.paths(name) ?? []) {
++      const candidate = join(searchPath, name)
++      if (existsSync(join(candidate, 'package.json'))) return candidate
++    }
++    return undefined
++  }
++  type Manifest = { dependencies?: Record<string, unknown>; peerDependencies?: Record<string, unknown> }
++  const queue: Array<{ anchor: string; manifest: Manifest }> = [{
++    anchor: installAnchor,
++    manifest: JSON.parse(readFileSync(installAnchor, 'utf8')) as Manifest,
++  }]
++  const visited = new Set<string>()
++  while (queue.length > 0) {
++    const current = queue.shift()!
++    const names = [...Object.keys(current.manifest.dependencies ?? {}), ...Object.keys(current.manifest.peerDependencies ?? {})]
++    for (const name of names) {
++      if (visited.has(name)) continue
++      const packageDir = resolvePackageDir(current.anchor, name)
++      if (packageDir === undefined) continue
++      visited.add(name)
++      const link = join(profilesNm, name)
++      mkdirSync(dirname(link), { recursive: true })
++      try {
++        if (lstatSync(link).isSymbolicLink()) unlinkSync(link)
++        else rmSync(link, { recursive: true, force: true })
++      } catch (error) {
++        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
++      }
++      symlinkSync(packageDir, link, 'junction')
++      const manifestPath = join(packageDir, 'package.json')
++      queue.push({
++        anchor: manifestPath,
++        manifest: JSON.parse(readFileSync(manifestPath, 'utf8')) as Manifest,
++      })
++    }
++  }
++}
++
+ // Bootstrap DEEPSEEK_API_KEY from the workspace .env.
+ if (!process.env.DEEPSEEK_API_KEY) {
+   try {
+@@ -188,6 +234,7 @@ if (existsSync(pluginsDir)) {
+ // Create module-resolution symlinks for external plugins so the Loader can
+ // find them (they live outside the workspace's dependency closure).
+ const profilesNm = join(dshHome, 'profiles', 'node_modules')
++mkdirSync(profilesNm, { recursive: true })
+ if (existsSync(profilesNm)) {
+   for (const patchFile of externalPatchFiles) {
+     const pluginDir = dirname(patchFile)
+@@ -281,7 +328,11 @@ const allPatches = withShippedPresetRoot([...baseComposition, ...userComposition
+ // --- Boot ---
+ 
+ // Ensure the module fallback exists so the Loader can resolve every plugin.
+-await healProfilesModuleFallback({ installAnchor: INSTALL_ANCHOR })
++if (legacyHealProfilesModuleFallback !== undefined) {
++  await legacyHealProfilesModuleFallback({ installAnchor: INSTALL_ANCHOR })
++} else {
++  await rebuildProfilesModuleFallback(INSTALL_ANCHOR)
++}
+ 
+ // The local TUI is not part of the DSH checkout's dependency closure. Expose
+ // this checkout through the same profile fallback used by core plugins.
 diff --git a/scripts/verify-alpha-source.mjs b/scripts/verify-alpha-source.mjs
-index 8a6265d..df0aefb 100644
+index 8a6265d35e62aa798c589c5b298c3433f43d60ec..df0aefb6fccecfb28d66e89ebb9cc19354990617 100644
 --- a/scripts/verify-alpha-source.mjs
 +++ b/scripts/verify-alpha-source.mjs
 @@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
@@ -7132,7 +7237,7 @@ index 8a6265d..df0aefb 100644
  if (!process.env.DSH_HARNESS_SOURCE_ROOT) {
    console.error(`DSH_HARNESS_SOURCE_ROOT is unset: point it at a deepseek-harness checkout of dsh-v${EXPECTED_UPSTREAM_VERSION}`)
 diff --git a/scripts/verify-patch-surface.ts b/scripts/verify-patch-surface.ts
-index c8fd892..7a5da7a 100644
+index c8fd892d5c86cb5792ec0d93e128e0119b6964f0..7a5da7a51d822083489bd2e883eaf42d990fefca 100644
 --- a/scripts/verify-patch-surface.ts
 +++ b/scripts/verify-patch-surface.ts
 @@ -162,8 +162,8 @@ const requireSourceBaseline = process.env.DSH_REQUIRE_ALPHA_BASELINE === '1'
@@ -7147,7 +7252,7 @@ index c8fd892..7a5da7a 100644
    baselines.push(source)
  } else if (requireSourceBaseline) {
 diff --git a/scripts/verify-upstream-contract.ts b/scripts/verify-upstream-contract.ts
-index f7c4d59..5eec0a1 100644
+index f7c4d5921ce07cf7578c75f60580e89a09588afb..5eec0a13722320ff4464d6c7407312d738d49490 100644
 --- a/scripts/verify-upstream-contract.ts
 +++ b/scripts/verify-upstream-contract.ts
 @@ -29,7 +29,7 @@ assert.deepEqual(parseUpstreamVersion('0.1.2-alpha.3'), [0, 1, 2, 'alpha', 3])
@@ -7160,7 +7265,7 @@ index f7c4d59..5eec0a1 100644
  // the primary from UPSTREAM_VALIDATED_VERSIONS still passes the prefix match
  // and upstreamDrift() (which inspects the INSTALLED versions, not the
 diff --git a/scripts/verify-web-coexistence.mjs b/scripts/verify-web-coexistence.mjs
-index 49d8642..cc36003 100644
+index 49d86423fc36e2db6cde4f7078fa0908d2b2560d..cc36003cd59d511280b7885ed18dfec37674f097 100644
 --- a/scripts/verify-web-coexistence.mjs
 +++ b/scripts/verify-web-coexistence.mjs
 @@ -43,8 +43,8 @@ const sourceBasePath = sourceRoot === undefined ? '' : join(sourceRoot, 'package
@@ -7175,7 +7280,7 @@ index 49d8642..cc36003 100644
    const resolver = prepareUpstreamSourceResolver(sourceRoot)
    baselines.push({
 diff --git a/src/dsh-adapter/contract.ts b/src/dsh-adapter/contract.ts
-index 3a0e23d..4c7c24f 100644
+index 3a0e23d8f131a02ebc7ed3284feacd850d489604..4c7c24fe05d9966908108d4cfc3ffd5168c2c1cb 100644
 --- a/src/dsh-adapter/contract.ts
 +++ b/src/dsh-adapter/contract.ts
 @@ -2,7 +2,7 @@
@@ -7212,7 +7317,7 @@ index 3a0e23d..4c7c24f 100644
  
  /**
 diff --git a/src/dsh-adapter/plugin.ts b/src/dsh-adapter/plugin.ts
-index af4fd9e..7c638e4 100644
+index af4fd9e804c218477edc2c735a1a4272f4c643b6..7c638e4bc982487319c7215b68f8e89f0c16b987 100644
 --- a/src/dsh-adapter/plugin.ts
 +++ b/src/dsh-adapter/plugin.ts
 @@ -470,7 +470,30 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>,

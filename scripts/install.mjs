@@ -88,7 +88,7 @@ function parseArgs(argv) {
     withHost: process.env.COMBO_WITH_HOST === '1',
     withHostExplicit: process.env.COMBO_WITH_HOST === '1',
     dshPackage: process.env.COMBO_DSH_PACKAGE || publishedDsh.package || '@deepseek-ai/dsh',
-    dshVersion: process.env.COMBO_DSH_VERSION || publishedDsh.version || '0.2.0-rc.2',
+    dshVersion: process.env.COMBO_DSH_VERSION || publishedDsh.version || '0.2.1-alpha.1',
     pluginSpec: process.env.COMBO_AGENT_PLUGIN || publishedPlugin.package || '@agent-society/dsh-agent-society',
     dryRun: false,
     yes: false,
@@ -880,7 +880,7 @@ async function buildAll(harness, tui, agentSociety, openCodeFull, changed) {
       pnpm(nativeSystem, ['run', 'build:native'])
     } catch {
       console.warn('[warn] full native build failed (landlock needs musl-gcc); building the host addon only')
-      pnpm(nativeSystem, ['run', 'build:native', '--', '--host-addon-only'])
+      pnpm(nativeSystem, ['run', 'build:native', '--host-addon-only'])
     }
   } else {
     console.log('[skip] deepseek-harness native addon already built')

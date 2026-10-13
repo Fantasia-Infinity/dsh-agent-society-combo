@@ -2,7 +2,7 @@
   "checksums": {},
   "components": {
     "deepseek-harness": {
-      "commit": "9f3e66b0fed06c60fb5ad782f7dc99fa08a24715",
+      "commit": "1b316d0444450d484ade4c1da76f9224d33251bc",
       "files": [],
       "patches": [
         {
@@ -13,7 +13,7 @@
       "repo": "https://github.com/Fantasia-Infinity/deepseek-harness.git"
     },
     "dsh-tui": {
-      "commit": "b76467ac61970f059f81e848518bfd56e2f0223e",
+      "commit": "ab9f139457d5931079e8d19d05ba3e35c1ca058d",
       "files": [
         {
           "dest": "bin/dsh-tui-local.js",
@@ -24,12 +24,8 @@
       ],
       "patches": [
         {
-          "path": "patches/dsh-tui/0004-build-against-sibling-checkout.patch",
-          "sha256": "25c5c004455666923558ae91c3312f51876102071db8c984c59a04fe46178748"
-        },
-        {
-          "path": "patches/dsh-tui/0016-dsh-0.2.1-alpha1-contract-and-launcher.patch",
-          "sha256": "e7e0c3670e2ab8e87cf538b4ea5f882be0e4b8d4724a2bbf0ba44fa8ab999b9b"
+          "path": "patches/dsh-tui/0017-dsh-0.2.1-alpha2-tui-0.15-source.patch",
+          "sha256": "472817d429b10a7fe59d71b1a5d342fbbfeb5869c1833e884f9a21ba4deaf99d"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/dsh-TUI.git"
@@ -81,6 +77,10 @@
         {
           "path": "patches/agent-society/0012-deepseek-messages-endpoint.patch",
           "sha256": "e817460bcaed36e6e99e72381d64017f545a54da6fd650676cfa68dc662d42e5"
+        },
+        {
+          "path": "patches/agent-society/0013-dsh-0.2.1-alpha2-package-pins.patch",
+          "sha256": "8da42f41b31ed3bec1c23c403349d4902d52b05073950b96a26555ba359c3b08"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/AgentSociety.git"
@@ -102,9 +102,9 @@
   "published": {
     "dsh": {
       "package": "@deepseek-ai/dsh",
-      "version": "0.2.1-alpha.1",
+      "version": "0.2.1-alpha.2",
       "source": "Fantasia-Infinity/deepseek-harness",
-      "commit": "9f3e66b0fed06c60fb5ad782f7dc99fa08a24715"
+      "commit": "1b316d0444450d484ade4c1da76f9224d33251bc"
     },
     "agentSocietyPlugin": {
       "package": "@agent-society/dsh-agent-society",

@@ -19,15 +19,15 @@
 
 | 组件 | 固定 commit |
 |---|---|
-| deepseek-harness | `9f3e66b0fed06c60fb5ad782f7dc99fa08a24715` |
-| dsh-TUI | `b76467ac61970f059f81e848518bfd56e2f0223e` |
+| deepseek-harness | `1b316d0444450d484ade4c1da76f9224d33251bc` |
+| dsh-TUI | `ab9f139457d5931079e8d19d05ba3e35c1ca058d` |
 | AgentSociety | `03fe4f7` |
 | dsh-anchored-standard | `dda23ef119e3715f417d73f72eca407732846d1a` |
 | dsh-opencode-full（可选） | `f4d4dda7c2ab8032ed169a770db3594cf98ea638` |
 
-发布版运行时绑定：`@deepseek-ai/dsh@0.2.1-alpha.1`，来源为
+发布版运行时绑定：`@deepseek-ai/dsh@0.2.1-alpha.2`，来源为
 `Fantasia-Infinity/deepseek-harness`（对应已发布 commit
-`9f3e66b0fed06c60fb5ad782f7dc99fa08a24715`）；AgentSociety 插件为
+`1b316d0444450d484ade4c1da76f9224d33251bc`）；AgentSociety 插件为
 `@agent-society/dsh-agent-society`。Combo 会分别校验 npm 与 source 模式的 dsh
 版本；两种模式的差异只通过显式 `--source` 选择，不会静默混用。
 
@@ -35,10 +35,12 @@
 Combo 不再重复打旧的 Web base-path patch；仅补回 worker profile 启动时需要的
 profile-local runtime 标记。实验性的 Agent Teams 保持上游默认关闭，不加入 Combo profile。
 
-dsh-TUI `0.13.0` 已对齐 dsh `0.2.1-alpha.1`。源码模式会初始化 `vendor/dsh-std` 子模块，并使用 Combo 的 sibling-checkout build 与独立
-source launcher patch；alpha1 契约 patch 同步更新 workspace overrides、依赖锁和版本验证，
+dsh-TUI `0.15.0` 已对齐 dsh `0.2.1-alpha.2`。源码模式会初始化 `vendor/dsh-std` 子模块，并使用 Combo 的 sibling-checkout build 与独立
+source launcher patch；alpha2 兼容 patch 同步更新 workspace overrides、依赖锁和版本验证，
 移除上游已删除的 invariant 入口，使用新的 `PluginPackages` 内存解析机制，
-并修复严格 Cordis service 读取。原生 addon fallback 按 pnpm 参数规则调用。
+并修复严格 Cordis service 读取。独立入口的宿主导出与复刻快照已核对；源码构建使用
+上游 vendor 和 compile:src 流程，生成 MathJax、后端索引及 settings.json 资源。
+原生 addon fallback 按 pnpm 参数规则调用。
 该适配覆盖 TUI 启动和构建链，不启用 Agent Teams，也不修改
 TUI 上游源码。
 
@@ -78,7 +80,7 @@ AGENT_DSH_WEB_BRIDGE_START=0  # 禁用自动启动，要求已有 DSH Web
 先安装当前 fork 对应的 dsh 发布包：
 
 ```bash
-npm install -g @deepseek-ai/dsh@0.2.1-alpha.1
+npm install -g @deepseek-ai/dsh@0.2.1-alpha.2
 ```
 
 然后添加 AgentSociety 插件到三个彼此隔离的 profile：
@@ -244,7 +246,7 @@ bridge 会等待本地 DSH Web 就绪、注册 `dsh_web` 节点能力，并转�
 npm 模式下更新由 dsh/npm 管理，不在 `node_modules` 或安装目录执行 Git 更新：
 
 ```bash
-npm install -g @deepseek-ai/dsh@0.2.1-alpha.1 @agent-society/agent-host
+npm install -g @deepseek-ai/dsh@0.2.1-alpha.2 @agent-society/agent-host
 agent update                         # 更新 dsh、Host、三个 dsh profile 插件
 combo install --update               # 也可以只更新 AgentSociety 插件
 ```

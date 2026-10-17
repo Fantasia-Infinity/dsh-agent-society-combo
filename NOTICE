@@ -6,9 +6,6 @@ following repositories at the pinned commits recorded in `sources.lock.json`:
 - deepseek-harness
   - https://github.com/Fantasia-Infinity/deepseek-harness
   - Copyright DeepSeek and contributors
-- dsh-TUI
-  - https://github.com/Fantasia-Infinity/dsh-TUI
-  - Copyright Fantasia-Infinity and contributors
 - AgentSociety
   - https://github.com/Fantasia-Infinity/AgentSociety
   - Copyright Fantasia-Infinity and contributors
@@ -16,5 +13,11 @@ following repositories at the pinned commits recorded in `sources.lock.json`:
   - https://github.com/xiaobright/dsh-anchored-standard
   - Copyright xiaobright and contributors
 
-Patch files in `patches/` are derived from local working-tree changes for
+Historical dsh-TUI compatibility patches are retained under `archive/dsh-tui`;
+the installer no longer clones or manages that repository:
+
+- https://github.com/Fantasia-Infinity/dsh-TUI
+- Copyright Fantasia-Infinity and contributors
+
+Patch files in `patches/` and `archive/` are derived from local working-tree changes for
 compatibility and remain under the upstream projects' licenses.

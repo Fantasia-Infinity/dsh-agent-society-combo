@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -17,22 +18,80 @@ test("published dry-run is dsh-first and does not schedule source checkout work"
   assert.doesNotMatch(output, /git clone/u);
 });
 
-test("source dry-run remains explicit and keeps the TUI in the locked source set", () => {
+test("source dry-run adapts dsh without scheduling the archived TUI", () => {
   const output = execFileSync(process.execPath, [join(rootDir, "scripts/install.mjs"), "--source", "--dry-run"], {
     cwd: rootDir,
     encoding: "utf8",
   });
   assert.match(output, /deepseek-harness/u);
   assert.match(output, /1b316d0444450d484ade4c1da76f9224d33251bc/u);
-  assert.match(output, /dsh-TUI/u);
-  assert.match(output, /ab9f139457d5931079e8d19d05ba3e35c1ca058d/u);
-  assert.match(output, /0017-dsh-0\.2\.1-alpha2-tui-0\.15-source\.patch/u);
+  assert.doesNotMatch(output, /dsh-tui|TUI|\.dsh-tui/iu);
   assert.match(output, /0003-dsh-first-runtime\.patch/u);
   assert.match(output, /0009-dsh-0\.1\.7-rc2-api-compat\.patch/u);
   assert.doesNotMatch(output, /0001-standalone-source-launcher\.patch/u);
   assert.doesNotMatch(output, /0007-rc7-cmdlineargs-ctx-get\.patch/u);
   assert.doesNotMatch(output, /0009-dsh-alpha-api-adaptation\.patch/u);
   assert.doesNotMatch(output, /0003-live-adoption-revision-retry\.patch/u);
+});
+
+test("retired TUI source overrides fail before installation", () => {
+  const result = spawnSync(process.execPath, [join(rootDir, "scripts/install.mjs"), "--source", "dsh-tui=/unused", "--dry-run"], {
+    encoding: "utf8",
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unknown source component "dsh-tui"/u);
+});
+
+test("archived TUI manifests retain verifiable patch and launcher contents", async () => {
+  const archive = JSON.parse(await readFile(join(rootDir, "archive/dsh-tui/sources.lock.json"), "utf8"));
+  const component = archive.components["dsh-tui"];
+  for (const item of [...component.patches, ...component.files]) {
+    const content = await readFile(join(rootDir, item.path || item.src));
+    assert.equal(createHash("sha256").update(content).digest("hex"), item.sha256);
+  }
+  const active = JSON.parse(await readFile(join(rootDir, "sources.lock.json"), "utf8"));
+  assert.equal(Object.hasOwn(active.components, "dsh-tui"), false);
+});
+
+test("source update leaves an existing TUI installation and its preferences untouched", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "combo-retired-"));
+  const installRoot = join(temp, "combo");
+  const dshHome = join(temp, "dsh");
+  const bin = join(temp, "bin");
+  const userHome = join(temp, "home");
+  try {
+    const sentinels = [
+      join(installRoot, "sources/dsh-tui/keep.txt"),
+      join(installRoot, "state/dsh-tui.json"),
+      join(dshHome, "profiles/dsh-tui/cordis.patch.yml"),
+      join(bin, "dsh-tui"),
+      join(userHome, ".dsh-tui/agent-preset.json"),
+    ];
+    const overrides = [];
+    for (const name of ["deepseek-harness", "agent-society", "dsh-anchored-standard"]) {
+      const source = join(temp, name);
+      await mkdir(source, { recursive: true });
+      overrides.push("--source", `${name}=${source}`);
+    }
+    for (const path of sentinels) {
+      await mkdir(join(path, ".."), { recursive: true });
+      await writeFile(path, "preserve existing TUI data\n");
+    }
+    const output = execFileSync(process.execPath, [join(rootDir, "scripts/install.mjs"), "--root", installRoot,
+      ...overrides, "--update", "--skip-deps", "--skip-build", "--skip-links", "--skip-config"], {
+      env: { ...process.env, HOME: userHome, USERPROFILE: userHome, DSH_HOME: dshHome, COMBO_BIN: bin },
+      encoding: "utf8",
+    });
+    assert.match(output, /Install complete/u);
+    assert.doesNotMatch(output, /dsh-tui|TUI|\.dsh-tui/iu);
+    for (const path of sentinels) assert.equal(await readFile(path, "utf8"), "preserve existing TUI data\n");
+    const report = spawnSync(process.execPath, [join(rootDir, "scripts/doctor.mjs"), "--root", installRoot, "--json"], {
+      env: { ...process.env, DSH_HOME: dshHome }, encoding: "utf8",
+    });
+    assert.equal(JSON.parse(report.stdout).checks.some(item => /tui/iu.test(item.name)), false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
 });
 
 test("doctor accepts a non-executable dsh JavaScript shim through Node fallback", async () => {

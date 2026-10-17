@@ -58,6 +58,9 @@ const sourceOverrides = new Map()
 for (const item of options.source) {
   const separator = item.indexOf('=')
   if (separator < 0) throw new Error(`--source expects name=path, got ${item}`)
+  if (!Object.hasOwn(manifest.components, item.slice(0, separator))) {
+    throw new Error(`Unknown source component "${item.slice(0, separator)}". See sources.lock.json; retired integrations are in archive/.`)
+  }
   sourceOverrides.set(
     item.slice(0, separator),
     resolve(item.slice(separator + 1)),
@@ -78,7 +81,6 @@ function parseArgs(argv) {
     skipDeps: false,
     skipBuild: false,
     skipLinks: false,
-    skipConfig: false,
     forceBuild: false,
     update: false,
     withSsh: false,
@@ -119,7 +121,7 @@ function parseArgs(argv) {
     else if (arg === '--skip-deps') result.skipDeps = true
     else if (arg === '--skip-build') result.skipBuild = true
     else if (arg === '--skip-links') result.skipLinks = true
-    else if (arg === '--skip-config') result.skipConfig = true
+    else if (arg === '--skip-config') { /* Legacy no-op: retired preference writer. */ }
     else if (arg === '--force-build') result.forceBuild = true
     else if (arg === '--update') result.update = true
     else if (arg === '--with-ssh') { result.withSsh = true; if (next && !next.startsWith('--')) { result.sshPlugin = next; index += 1 } }
@@ -153,7 +155,7 @@ Modes:
 
 Options:
   --root <dir>        install root (default ~/.local/share/dsh-agent-society-combo)
-  --preset <id>       default TUI preset: anchored-standard (default), standard,
+  --preset <id>       source Web preset: anchored-standard (default), standard,
                       ptc, minimal, or cordis
   --source <name>=<path>
                       source mode; use an existing checkout instead of cloning
@@ -161,7 +163,7 @@ Options:
   --skip-deps         do not install npm/pnpm dependencies
   --skip-build        do not build
   --skip-links        do not create ~/.dsh and bin links
-  --skip-config       do not write default TUI preferences
+  --skip-config       deprecated compatibility flag (no effect)
   --force-build       rebuild even when build markers exist
   --update            refresh this install to the current sources.lock.json
   --with-ssh [spec]   add an SSH ops plugin to the web profile
@@ -291,7 +293,6 @@ async function installSourceMode() {
 
   const components = [
     'deepseek-harness',
-    'dsh-tui',
     'agent-society',
     'dsh-anchored-standard',
     ...(options.withOpenCodeFull ? ['dsh-opencode-full'] : []),
@@ -307,16 +308,15 @@ async function installSourceMode() {
   }
 
   const harness = componentDir('deepseek-harness')
-  const tui = componentDir('dsh-tui')
   const agentSociety = componentDir('agent-society')
   const openCodeFull = options.withOpenCodeFull
     ? componentDir('dsh-opencode-full')
     : undefined
 
-  if (!options.skipDeps) await installDependencies(harness, tui, agentSociety, openCodeFull, changed)
-  if (!options.skipBuild) await buildAll(harness, tui, agentSociety, openCodeFull, changed)
+  if (!options.skipDeps) await installDependencies(harness, agentSociety, openCodeFull, changed)
+  if (!options.skipBuild) await buildAll(harness, agentSociety, openCodeFull, changed)
   if (!options.skipLinks) {
-    await createLinks(harness, tui, agentSociety)
+    await createLinks(harness, agentSociety)
     if (openCodeFull) await createOpenCodeFullLinks(openCodeFull)
     await ensureWebProfile(
       harness,
@@ -328,7 +328,6 @@ async function installSourceMode() {
     )
     writeComboLauncher()
   }
-  if (!options.skipConfig) await writePreferences()
   writeInstallState({
     mode: 'source',
     root,
@@ -342,7 +341,6 @@ async function installSourceMode() {
   console.log('Install complete.')
   console.log('  dsh:      ' + join(binDir, platform() === 'win32' ? 'dsh.cmd' : 'dsh'))
   console.log('  agent:    ' + join(binDir, platform() === 'win32' ? 'agent.cmd' : 'agent'))
-  console.log('  dsh-tui:  ' + join(binDir, platform() === 'win32' ? 'dsh-tui.cmd' : 'dsh-tui'))
   if (openCodeFull) {
     console.log('  preset:   opencode-full (web default)')
   }
@@ -371,7 +369,6 @@ function printPlan() {
   }
   const names = [
     'deepseek-harness',
-    'dsh-tui',
     'agent-society',
     'dsh-anchored-standard',
     ...(options.withOpenCodeFull ? ['dsh-opencode-full'] : []),
@@ -384,8 +381,7 @@ function printPlan() {
   }
   console.log('  link ~/.dsh/plugins/agent-society')
   console.log('  copy ~/.dsh/.agent-presets/anchored-standard')
-  console.log('  write ~/.dsh-tui/agent-preset.json = ' + options.preset)
-  console.log('  links: dsh, dsh-tui, agent')
+  console.log('  links: dsh, agent')
   console.log(`  web profiles: web + agent-society-web (core dsh-agent-society, preset ${options.preset})` + (options.withSsh ? ` + ${options.sshPlugin}` : ''))
   console.log('  headless profile: headless (core dsh-agent-society)')
   if (options.withOpenCodeFull) {
@@ -542,9 +538,7 @@ async function installComponent(name) {
     )
   }
   runChecked('git', ['reset', '--hard', comp.commit], dir)
-  // TUI >= 0.8.1 vendors @dsh-std via git submodules (vendor/dsh-std and
-  // dsh-ecosystem-spec); initialize them so the pnpm workspace resolves.
-  // A no-op for components without submodules.
+  // Initialize submodules required by the pinned source components.
   runChecked('git', ['submodule', 'update', '--init', '--recursive'], dir)
   removeStaleOverlays(dir, previousState?.files, desiredState.files)
   for (const patch of comp.patches) {
@@ -652,22 +646,10 @@ function restoreUserData(dir, backup) {
   }
 }
 
-async function installDependencies(harness, tui, agentSociety, openCodeFull, changed) {
+async function installDependencies(harness, agentSociety, openCodeFull, changed) {
   const installHarness = changed.has('deepseek-harness') || !existsSync(join(harness, 'node_modules', '.pnpm'))
   console.log(installHarness ? '[deps] deepseek-harness pnpm install' : '[skip] deepseek-harness node_modules current')
   if (installHarness) pnpm(harness, ['install', '--frozen-lockfile'])
-
-  const installTui = changed.has('dsh-tui') || !existsSync(join(tui, 'node_modules', 'react'))
-  console.log(installTui ? '[deps] dsh-TUI pnpm install' : '[skip] dsh-TUI node_modules current')
-  // Upstream moved to pnpm (package-lock.json -> pnpm-lock.yaml); its
-  // `prepare` script compiles with tsc before deps are linked, so install
-  // with scripts skipped and let buildAll run the real compile. The pinned
-  // TUI compatibility patch rewrites its development dependency versions for
-  // the sibling DSH checkout, while those prerelease package versions are not
-  // all published to npm. Bootstrap dependencies against the checkout's
-  // original package/lock pair, then restore the patched files byte-for-byte;
-  // buildAll links the actual sibling DSH packages immediately afterwards.
-  if (installTui) installTuiBootstrapDependencies(tui)
 
   const installAgentHost = changed.has('agent-society') || !existsSync(join(agentSociety, 'agent-host', 'node_modules'))
   console.log(installAgentHost ? '[deps] AgentSociety agent-host npm ci' : '[skip] agent-host node_modules current')
@@ -740,34 +722,6 @@ async function installDependencies(harness, tui, agentSociety, openCodeFull, cha
   }
 }
 
-function installTuiBootstrapDependencies(tui) {
-  // The source compatibility patch updates the workspace overrides as well
-  // as package.json and pnpm-lock.yaml. Bootstrap against the exact upstream
-  // trio, then restore all patched files before linking the sibling DSH tree.
-  const files = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml']
-  const originals = new Map()
-  const pinned = new Map()
-  for (const file of files) {
-    const path = join(tui, file)
-    if (!existsSync(path)) continue
-    originals.set(file, readFileSync(path, 'utf8'))
-    const result = runCapture('git', ['show', `HEAD:${file}`], tui, false)
-    if (result.status !== 0) {
-      // A user-supplied source checkout may not be a git worktree. In that
-      // case retain its own manifest and let pnpm report any real mismatch.
-      pnpm(tui, ['install', '--frozen-lockfile', '--ignore-scripts'])
-      return
-    }
-    pinned.set(file, result.stdout)
-  }
-  try {
-    for (const [file, content] of pinned) writeFileSync(join(tui, file), content)
-    pnpm(tui, ['install', '--frozen-lockfile', '--ignore-scripts'])
-  } finally {
-    for (const [file, content] of originals) writeFileSync(join(tui, file), content)
-  }
-}
-
 function installSourcePackageWithoutLocalDependency(packageDir, dependency) {
   const packageFile = join(packageDir, 'package.json')
   const lockFile = join(packageDir, 'package-lock.json')
@@ -827,13 +781,12 @@ function linkLocalDshPackages(harness, pluginDir) {
   console.log(`[link] ${seen.size} local DSH packages -> ${packageRoot}`)
 }
 
-async function buildAll(harness, tui, agentSociety, openCodeFull, changed) {
+async function buildAll(harness, agentSociety, openCodeFull, changed) {
   const harnessBin = join(harness, 'apps', 'cli', 'lib', 'bin.js')
   const bootLib = join(harness, 'packages', 'boot', 'app-boot', 'lib', 'index.js')
   // Client-face packages (@deepseek-ai/dsh-typert-registry,
   // @deepseek-ai/dsh-api-gateway, ...) are emitted only by the Client pass;
-  // the dsh-TUI bundle rows load them at boot, so the full build:lib
-  // (host + client passes) is required for a working TUI.
+  // the Web profile loads them at boot, so both build:lib passes are required.
   const clientLib = join(harness, 'packages', 'api', 'gateway', 'lib', 'index.js')
   if (
     options.forceBuild ||
@@ -886,33 +839,6 @@ async function buildAll(harness, tui, agentSociety, openCodeFull, changed) {
     console.log('[skip] deepseek-harness native addon already built')
   }
 
-  const tuiPlugin = join(tui, 'lib', 'types', 'index.js')
-  if (
-    options.forceBuild ||
-    changed.has('dsh-tui') ||
-    !existsSync(tuiPlugin)
-  ) {
-    console.log('[build] dsh-TUI')
-    if (platform() === 'win32') {
-      const bash = which('bash')
-      if (bash) {
-        runChecked(bash, ['scripts/build.sh'], tui, {
-          DSH_CHECKOUT: harness,
-        })
-      } else {
-        runChecked('npx', ['tsc', '-p', 'tsconfig.json'], tui, {
-          DSH_CHECKOUT: harness,
-        })
-      }
-    } else {
-      runChecked('/bin/sh', ['scripts/build.sh'], tui, {
-        DSH_CHECKOUT: harness,
-      })
-    }
-  } else {
-    console.log('[skip] dsh-TUI already built')
-  }
-
   const agentConfig = join(agentSociety, 'agent-config')
   if (existsSync(join(agentConfig, 'package.json'))) {
     if (options.forceBuild || changed.has('agent-society') || !existsSync(join(agentConfig, 'lib', 'index.js'))) {
@@ -943,7 +869,7 @@ async function buildAll(harness, tui, agentSociety, openCodeFull, changed) {
   }
 }
 
-async function createLinks(harness, tui, agentSociety) {
+async function createLinks(harness, agentSociety) {
   ensureDir(binDir)
   ensureDir(join(dshHome, 'plugins'))
   ensureDir(join(dshHome, '.agent-presets'))
@@ -960,38 +886,13 @@ async function createLinks(harness, tui, agentSociety) {
 
   if (platform() === 'win32') {
     writeCmd('dsh', ['node', join(harness, 'apps', 'cli', 'lib', 'bin.js')])
-    writeCmd('dsh-tui', ['node', join(tui, 'bin', 'dsh-tui-local.js')])
     writeCmd(
       'agent',
       ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(agentSociety, 'agent.ps1')],
     )
   } else {
     linkExecutable(join(harness, 'apps', 'cli', 'lib', 'bin.js'), join(binDir, 'dsh'))
-    writeDshTuiWrapper(binDir, tui, agentSociety)
     linkExecutable(join(agentSociety, 'agent'), join(binDir, 'agent'))
-  }
-
-  // agent-host resolves its sibling dsh-TUI checkout by the canonical repo
-  // name `dsh-TUI` (cli.ts runDshTui), while this installer keeps the
-  // component at `sources/dsh-tui`. On case-sensitive filesystems (Linux)
-  // that lookup misses and `agent` silently falls back to the Pi TUI.
-  // Mirror the canonical name. macOS/Windows filesystems are
-  // case-insensitive, so the guard below simply no-ops there.
-  if (platform() !== 'win32') {
-    const tuiAlias = join(sourcesRoot, 'dsh-TUI')
-    const tuiDir = componentDir('dsh-tui')
-    if (!existsSync(tuiAlias) && !isLink(tuiAlias)) {
-      try {
-        symlinkSync(tuiDir, tuiAlias, 'dir')
-        console.log(`[link] ${tuiAlias} -> ${tuiDir}`)
-      } catch (error) {
-        console.warn(
-          `[warn] could not create ${tuiAlias}: ${error instanceof Error ? error.message : String(error)}`,
-        )
-      }
-    } else {
-      console.log(`[keep] ${tuiAlias} already exists`)
-    }
   }
 
   // Source mode uses the same standard dsh profile names as npm mode. Keep
@@ -1228,18 +1129,6 @@ async function ensureWebProfile(harness, agentSociety, sshSpec, preset, openCode
   }
 }
 
-async function writePreferences() {
-  const prefsDir = join(home, '.dsh-tui')
-  ensureDir(prefsDir)
-  const prefs = join(prefsDir, 'agent-preset.json')
-  if (!existsSync(prefs)) {
-    writeFileSync(prefs, `${JSON.stringify({ preset: options.preset }, null, 2)}\n`)
-    console.log(`[config] default preset -> ${options.preset}`)
-  } else {
-    console.log(`[keep] existing ${prefs}`)
-  }
-}
-
 function componentDir(name) {
   return join(sourcesRoot, name)
 }
@@ -1267,73 +1156,6 @@ function linkOrCopy(source, target) {
   } catch {
     cpSync(source, target, { recursive: true, dereference: true })
   }
-}
-
-/**
- * The standalone dsh-TUI launcher knows nothing about AgentSociety's Hub
- * credentials, so launching `dsh-tui` directly left its Hub MCP rows
- * disabled. Install a thin wrapper that resolves the Hub URL from the
- * AgentSociety env file and the node token from the local keyring (kept
- * fresh by the worker), exports the Hub env, and execs the real launcher;
- * the layered-env patch then observes AGENT_SOCIETY_HUB_MCP early.
- * A target that is not this wrapper is preserved.
- */
-function writeDshTuiWrapper(binDir, tui, agentSociety) {
-  const mark = 'dsh-tui launcher with AgentSociety Hub tools'
-  const target = join(binDir, 'dsh-tui')
-  if (existsSync(target) || isLink(target)) {
-    let existing = ''
-    try {
-      existing = readFileSync(target, 'utf8')
-    } catch {
-      console.log(`[keep] ${target}`)
-      return
-    }
-    if (!existing.includes(mark)) {
-      console.log(`[keep] ${target} (not the combo wrapper)`)
-      return
-    }
-  }
-  const launcher = join(tui, 'bin', 'dsh-tui-local.js')
-  const envFile = join(agentSociety, '.private', 'env', 'agent.env')
-  const quote = (value) => `'${String(value).replaceAll("'", `'\\''`)}'`
-  const script = `#!/bin/sh
-# ${mark}.
-# Resolves the Hub URL from the AgentSociety env file and the node token
-# from the local keyring (kept fresh by the worker), then execs the real
-# launcher so the layered-env patch observes the Hub switches early.
-set -eu
-LAUNCHER=${quote(launcher)}
-ENV_FILE=${quote(envFile)}
-if [ -f "$ENV_FILE" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  . "$ENV_FILE" || true
-  set +a
-fi
-NODE_BIN="$(command -v node)"
-if [ ! -f "$LAUNCHER" ]; then
-  echo "dsh-tui launcher not found at $LAUNCHER" >&2
-  exit 1
-fi
-HUB_URL="\${AGENT_SOCIETY_HUB_URL:-\${AGENT_HUB_URL:-}}"
-TOKEN_SERVICE="\${AGENT_HUB_NODE_TOKEN_CREDENTIAL_SERVICE:-AgentSociety Hub Node}"
-TOKEN_ACCOUNT="\${AGENT_HUB_NODE_TOKEN_CREDENTIAL_ACCOUNT:-$USER}"
-HUB_TOKEN="$(secret-tool lookup service "$TOKEN_SERVICE" username "$TOKEN_ACCOUNT" 2>/dev/null || true)"
-if [ -n "$HUB_URL" ] && [ -n "$HUB_TOKEN" ]; then
-  export AGENT_SOCIETY_HUB_URL="$HUB_URL"
-  export AGENT_SOCIETY_HUB_TOKEN="$HUB_TOKEN"
-  export AGENT_SOCIETY_HUB_MCP=1
-else
-  echo "dsh-tui: no Hub credential; starting without Hub tools" >&2
-  export AGENT_SOCIETY_HUB_MCP=0
-fi
-exec "$NODE_BIN" "$LAUNCHER" "$@"
-`
-  ensureDir(binDir)
-  writeFileSync(target, script, { mode: 0o755 })
-  chmodSync(target, 0o755)
-  console.log(`[link] ${target} -> ${launcher} (hub-env wrapper)`)
 }
 
 function linkExecutable(source, target) {

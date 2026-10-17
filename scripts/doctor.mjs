@@ -396,11 +396,9 @@ function doctorSource() {
     }
   }
   const harness = join(root, "sources", "deepseek-harness");
-  const tui = join(root, "sources", "dsh-tui");
   const agent = join(root, "sources", "agent-society");
   check("source dsh CLI", existsSync(join(harness, "apps", "cli", "lib", "bin.js")));
   check("source dsh Web build", existsSync(join(harness, "apps", "web", "dist", "index.html")));
-  check("source dsh-TUI build", existsSync(join(tui, "lib", "types", "index.js")));
   check("source AgentSociety Host build", existsSync(join(agent, "agent-host", "dist", "src", "cli.js")));
   check("source AgentSociety plugin build", existsSync(join(agent, "dsh-plugin", "lib", "worker-plugin.js")));
   check(

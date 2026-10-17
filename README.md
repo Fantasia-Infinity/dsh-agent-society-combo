@@ -3,15 +3,16 @@
 以 dsh 为唯一主运行时安装 AgentSociety：
 
 - [deepseek-harness（上游）](https://github.com/Fantasia-Infinity/deepseek-harness)
-- [dsh-TUI（上游）](https://github.com/Fantasia-Infinity/dsh-TUI)
 - [AgentSociety](https://github.com/Fantasia-Infinity/AgentSociety)
 - [dsh-anchored-standard](https://github.com/xiaobright/dsh-anchored-standard)
 - [dsh-opencode-full](https://github.com/Fantasia-Infinity/dsh-opencode-full)（可选，`--with-opencode-full`）
 
 发布版用户只需要安装 dsh 和 AgentSociety dsh 插件；本仓库默认是一个薄安装器，
 不 clone、patch 或构建任何源码。`--source` 才启用下方 lock 文件所描述的源码开发
-模式，用于适配上游变动和开发验证。源码模式会把 patch 应用到受管 checkout，绝不
-修改 dsh-TUI 上游仓库本身。
+模式，用于适配 dsh 上游变动和开发验证。源码模式会把 patch 应用到受管 checkout。
+
+dsh-TUI 适配已[归档](archive/dsh-tui/README.md)，不再参与安装、更新、构建或诊断。
+以后只维护 dsh 本身与 AgentSociety 的集成；TUI 请按上游说明独立安装与更新。
 
 ## 版本矩阵
 
@@ -20,7 +21,6 @@
 | 组件 | 固定 commit |
 |---|---|
 | deepseek-harness | `1b316d0444450d484ade4c1da76f9224d33251bc` |
-| dsh-TUI | `ab9f139457d5931079e8d19d05ba3e35c1ca058d` |
 | AgentSociety | `03fe4f7` |
 | dsh-anchored-standard | `dda23ef119e3715f417d73f72eca407732846d1a` |
 | dsh-opencode-full（可选） | `f4d4dda7c2ab8032ed169a770db3594cf98ea638` |
@@ -35,17 +35,8 @@
 Combo 不再重复打旧的 Web base-path patch；仅补回 worker profile 启动时需要的
 profile-local runtime 标记。实验性的 Agent Teams 保持上游默认关闭，不加入 Combo profile。
 
-dsh-TUI `0.15.0` 已对齐 dsh `0.2.1-alpha.2`。源码模式会初始化 `vendor/dsh-std` 子模块，并使用 Combo 的 sibling-checkout build 与独立
-source launcher patch；alpha2 兼容 patch 同步更新 workspace overrides、依赖锁和版本验证，
-移除上游已删除的 invariant 入口，使用新的 `PluginPackages` 内存解析机制，
-并修复严格 Cordis service 读取。独立入口的宿主导出与复刻快照已核对；源码构建使用
-上游 vendor 和 compile:src 流程，生成 MathJax、后端索引及 settings.json 资源。
-原生 addon fallback 按 pnpm 参数规则调用。
-该适配覆盖 TUI 启动和构建链，不启用 Agent Teams，也不修改
-TUI 上游源码。
-
-默认 TUI preset：`anchored-standard`。`standard` / `ptc` / `minimal` /
-`cordis` 仍保留可选（安装时 `--preset standard`，或 TUI 内 `/preset`）。
+源码模式默认 Web preset 为 `anchored-standard`，可通过 `--preset` 选择
+`standard` / `ptc` / `minimal` / `cordis`。归档中的 TUI 补丁和最后验证版本仅供历史查阅。
 
 ## 最近更新：跨设备 DSH Web
 
@@ -121,8 +112,8 @@ cd dsh-agent-society-combo
 .\install.ps1
 ```
 
-默认 `install.sh` / `install.ps1` 进入 npm 模式，不会 clone AgentSociety、dsh 或
-dsh-TUI 源码。脚本检测到自己位于 combo checkout 内时，只直接使用当前 checkout
+默认 `install.sh` / `install.ps1` 进入 npm 模式，不会 clone AgentSociety 或 dsh
+源码。脚本检测到自己位于 combo checkout 内时，只直接使用当前 checkout
 的安装器；等价命令：
 
 ```bash
@@ -152,12 +143,12 @@ curl -fsSL .../install.sh | bash -s -- \
 | `--without-host` | 关闭 | 明确不安装可选 Host |
 | `--dsh-package <spec>` | `@deepseek-ai/dsh` | npm 模式的 dsh 包名 |
 | `--plugin <spec>` | `@agent-society/dsh-agent-society` | npm 模式的 AgentSociety 插件 |
-| `--preset <id>` | `anchored-standard` | 默认 preset |
+| `--preset <id>` | `anchored-standard` | source 模式默认 Web preset |
 | `--patch-only` | 关闭 | 只 clone + patch + 文件覆盖，适合 CI |
 | `--skip-deps` | 关闭 | 跳过 npm/pnpm install |
 | `--skip-build` | 关闭 | 跳过构建 |
 | `--skip-links` | 关闭 | 不写 `~/.dsh` 与 bin 链接 |
-| `--skip-config` | 关闭 | 不写 `~/.dsh-tui/agent-preset.json` |
+| `--skip-config` | 关闭 | 历史兼容参数，当前无效果 |
 | `--force-build` | 关闭 | 即使已有构建产物也重新构建 |
 | `--update` | 关闭 | 按当前 lock 更新已安装组件，变化项自动重装依赖与构建 |
 | `--with-ssh [spec]` | 关闭 | 向 `web` profile 追加 SSH 插件；source 模式使用兼容的 `agent-society-web` |
@@ -213,8 +204,8 @@ agent bootstrap | agent repair
 `0600` 的凭据文件，并由 `agent doctor` 持续提示这一风险。非交互模式请使用
 环境变量或显式凭据文件，不要把 API key / 密码放到命令行参数中。
 
-TUI 与 Web 是同一个 dsh core 上的两个 UI adapter，共享 `$DSH_HOME/sessions`、
-profile 插件、preset 与 dsh 模型凭据；TUI 不由本次 dsh-first 改动管理。
+Combo 管理 Web、headless 与 worker profile。已有 TUI checkout、启动器、profile、
+偏好和 session 保留在原位，不会自动删除；后续 dsh 更新不保证旧 TUI 的兼容性。
 
 
 ## AgentSociety Web Bridge 使用方式
@@ -315,7 +306,7 @@ web（source 模式兼容名为 `agent-society-web`）:
   @agent-society/dsh-agent-society   # AgentSociety 核心（Hub 工具 / web_search guard）
 ```
 
-它和 `headless`、`agent-society-worker`、TUI 外部 bundle 消费同一份 AgentSociety 插件，
+它和 `headless`、`agent-society-worker` 消费同一份 AgentSociety 插件，
 session 也共用 `$DSH_HOME/sessions`。npm 模式用 `dsh web`；source 模式保留
 `agent web` / `dsh-web` 兼容入口。
 安装器管理的 profile patch 会把 session 压缩默认设为 `zstd`，与共享
@@ -356,7 +347,7 @@ curl -fsSL .../install.sh | bash -s -- --with-ssh '@linxin666/dsh-ssh@0.1.18'
 
 说明：
 
-- 两者都面向 dsh Web GUI，不进入 dsh-TUI / worker profile；
+- 两者都面向 dsh Web GUI，不进入 worker profile；
 - `dsh-ssh-ops` 把秘密保存在 dsh 官方凭据库，并对 Agent 输出做脱敏；
 - `@linxin666/dsh-ssh` 支持 `~/.ssh/config` 导入、ProxyJump、集群执行等；
 - SSH 密码/私钥仍属于本机敏感数据，profile 安装不保存任何真实凭据；
@@ -372,11 +363,10 @@ combo install --dry-run
 
 ## 数据归属
 
-安装后 TUI / Web / worker 三个入口共享同一 `$DSH_HOME`：
+安装后 Web / headless / worker 共享同一 `$DSH_HOME`：
 
 - session 日志：`~/.dsh/sessions`
 - 凭据与设置：`~/.dsh/.credentials.yaml` / `~/.dsh/settings.yaml`
-- TUI 偏好：`~/.dsh-tui`
 - 外部插件：`~/.dsh/plugins`
 - AgentSociety 非敏感配置：`$DSH_HOME/.env`；旧 `~/.config/agentsociety/agent.env`、项目 `.env.agent` / `.private/env/agent.env` 只读兼容
 - AgentSociety 凭据：系统凭据库；显式 `--credentials file` 时为用户配置目录下的 0600 凭据文件，`env` 模式只读环境变量
@@ -386,7 +376,7 @@ combo install --dry-run
 ## 开发
 
 ```bash
-node scripts/install.mjs --patch-only --root /tmp/combo-patch-test
+node scripts/install.mjs --source --patch-only --root /tmp/combo-patch-test
 node scripts/doctor.mjs --root /tmp/combo-patch-test
 ```
 
@@ -398,7 +388,7 @@ node scripts/doctor.mjs --root /tmp/combo-patch-test
 
 ## 边界
 
-- 不修改 deepseek-harness / dsh-TUI 上游仓库；
+- 不修改 deepseek-harness 上游仓库；dsh-TUI 已退出当前维护范围，见归档；
 - patch 只保留运行时必需差异，不携带个人 notes、文档草稿；
 - 升级组合前先在 macOS / Linux / Windows CI 上验证 `--patch-only`，
   并在 macOS / Linux 上验证完整安装。

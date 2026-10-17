@@ -1,0 +1,31 @@
+{
+  "name": "dsh-TUI compatibility archive",
+  "status": "archived",
+  "archivedOn": "2026-10-17",
+  "lastComboCommit": "b5eac4d",
+  "harness": {
+    "version": "0.2.1-alpha.2",
+    "commit": "1b316d0444450d484ade4c1da76f9224d33251bc"
+  },
+  "tuiVersion": "0.15.0",
+  "components": {
+    "dsh-tui": {
+      "commit": "ab9f139457d5931079e8d19d05ba3e35c1ca058d",
+      "files": [
+        {
+          "dest": "bin/dsh-tui-local.js",
+          "executable": true,
+          "sha256": "295012cff584f94ee05d3a1b7805b9aba655b33ae983e40b2d60ad75a64d4e51",
+          "src": "archive/dsh-tui/patches/dsh-tui/files/bin/dsh-tui-local.js"
+        }
+      ],
+      "patches": [
+        {
+          "path": "archive/dsh-tui/patches/dsh-tui/0017-dsh-0.2.1-alpha2-tui-0.15-source.patch",
+          "sha256": "472817d429b10a7fe59d71b1a5d342fbbfeb5869c1833e884f9a21ba4deaf99d"
+        }
+      ],
+      "repo": "https://github.com/Fantasia-Infinity/dsh-TUI.git"
+    }
+  }
+}

@@ -25,7 +25,7 @@ jobs:
           ROOT="$RUNNER_TEMP/combo-install"
           node scripts/install.mjs --root "$ROOT" --source --patch-only
           test -f "$ROOT/sources/deepseek-harness/packages/core/session/src/types.ts"
-          test -f "$ROOT/sources/dsh-TUI/scripts/run.ts"
+          test ! -e "$ROOT/sources/dsh-tui"
           test -f "$ROOT/sources/agent-society/dsh-plugin/cordis.patch.yml"
           test -f "$ROOT/sources/dsh-anchored-standard/agent.cordis.yml"
           grep -q "activity/status" "$ROOT/sources/deepseek-harness/packages/core/session/src/types.ts"
@@ -41,4 +41,6 @@ jobs:
           node-version: 24
       - run: node --check scripts/install.mjs
       - run: node --check scripts/doctor.mjs
+      - run: node scripts/render-matrix.mjs --check
+      - run: node --test test/combo.test.mjs
       - run: git diff --check

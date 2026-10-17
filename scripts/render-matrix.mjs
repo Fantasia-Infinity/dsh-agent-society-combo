@@ -19,8 +19,6 @@ const readme = readFileSync(readmePath, 'utf8')
 const LABELS = {
   'deepseek-harness': 'deepseek-harness',
   'agent-society': 'AgentSociety',
-  'dsh-anchored-standard': 'dsh-anchored-standard',
-  'dsh-opencode-full': 'dsh-opencode-full（可选）',
 }
 
 const rows = Object.entries(lock.components).map(([name, comp]) => {

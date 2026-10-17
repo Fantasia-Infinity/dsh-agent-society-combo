@@ -1,0 +1,21 @@
+{
+  "name": "Third-party preset integration archive",
+  "status": "archived",
+  "archivedOn": "2026-10-17",
+  "lastComboCommit": "06c921a",
+  "formerDefaultPreset": "anchored-standard",
+  "components": {
+    "dsh-anchored-standard": {
+      "commit": "dda23ef119e3715f417d73f72eca407732846d1a",
+      "files": [],
+      "patches": [],
+      "repo": "https://github.com/xiaobright/dsh-anchored-standard.git"
+    },
+    "dsh-opencode-full": {
+      "commit": "f4d4dda7c2ab8032ed169a770db3594cf98ea638",
+      "files": [],
+      "patches": [],
+      "repo": "https://github.com/Fantasia-Infinity/dsh-opencode-full.git"
+    }
+  }
+}

@@ -5,7 +5,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society-combo/main/install.sh | bash
 #
 # With configuration passed through the environment:
-#   DEEPSEEK_API_KEY=... COMBO_PRESET=anchored-standard \
+#   DEEPSEEK_API_KEY=... COMBO_PRESET=standard \
 #     curl -fsSL https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society-combo/main/install.sh | bash -s -- --root "$HOME/.local/share/dsh-agent-society-combo"
 set -eu
 

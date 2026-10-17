@@ -9,15 +9,23 @@ following repositories at the pinned commits recorded in `sources.lock.json`:
 - AgentSociety
   - https://github.com/Fantasia-Infinity/AgentSociety
   - Copyright Fantasia-Infinity and contributors
-- dsh-anchored-standard
-  - https://github.com/xiaobright/dsh-anchored-standard
-  - Copyright xiaobright and contributors
 
 Historical dsh-TUI compatibility patches are retained under `archive/dsh-tui`;
 the installer no longer clones or manages that repository:
 
 - https://github.com/Fantasia-Infinity/dsh-TUI
 - Copyright Fantasia-Infinity and contributors
+
+Historical third-party preset integration records are retained under
+`archive/third-party-presets`; these repositories are no longer cloned or
+managed by the installer:
+
+- dsh-anchored-standard
+  - https://github.com/xiaobright/dsh-anchored-standard
+  - Copyright xiaobright and contributors
+- dsh-opencode-full
+  - https://github.com/Fantasia-Infinity/dsh-opencode-full
+  - Copyright the respective upstream contributors
 
 Patch files in `patches/` and `archive/` are derived from local working-tree changes for
 compatibility and remain under the upstream projects' licenses.

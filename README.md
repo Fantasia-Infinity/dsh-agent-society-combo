@@ -4,8 +4,6 @@
 
 - [deepseek-harness（上游）](https://github.com/Fantasia-Infinity/deepseek-harness)
 - [AgentSociety](https://github.com/Fantasia-Infinity/AgentSociety)
-- [dsh-anchored-standard](https://github.com/xiaobright/dsh-anchored-standard)
-- [dsh-opencode-full](https://github.com/Fantasia-Infinity/dsh-opencode-full)（可选，`--with-opencode-full`）
 
 发布版用户只需要安装 dsh 和 AgentSociety dsh 插件；本仓库默认是一个薄安装器，
 不 clone、patch 或构建任何源码。`--source` 才启用下方 lock 文件所描述的源码开发
@@ -13,6 +11,7 @@
 
 dsh-TUI 适配已[归档](archive/dsh-tui/README.md)，不再参与安装、更新、构建或诊断。
 以后只维护 dsh 本身与 AgentSociety 的集成；TUI 请按上游说明独立安装与更新。
+`dsh-anchored-standard` 和 `dsh-opencode-full` 的集成也已[归档](archive/third-party-presets/README.md)，不再由 Combo 安装或适配。
 
 ## 版本矩阵
 
@@ -22,8 +21,6 @@ dsh-TUI 适配已[归档](archive/dsh-tui/README.md)，不再参与安装、更�
 |---|---|
 | deepseek-harness | `1b316d0444450d484ade4c1da76f9224d33251bc` |
 | AgentSociety | `03fe4f7` |
-| dsh-anchored-standard | `dda23ef119e3715f417d73f72eca407732846d1a` |
-| dsh-opencode-full（可选） | `f4d4dda7c2ab8032ed169a770db3594cf98ea638` |
 
 发布版运行时绑定：`@deepseek-ai/dsh@0.2.1-alpha.2`，来源为
 `Fantasia-Infinity/deepseek-harness`（对应已发布 commit
@@ -35,8 +32,8 @@ dsh-TUI 适配已[归档](archive/dsh-tui/README.md)，不再参与安装、更�
 Combo 不再重复打旧的 Web base-path patch；仅补回 worker profile 启动时需要的
 profile-local runtime 标记。实验性的 Agent Teams 保持上游默认关闭，不加入 Combo profile。
 
-源码模式默认 Web preset 为 `anchored-standard`，可通过 `--preset` 选择
-`standard` / `ptc` / `minimal` / `cordis`。归档中的 TUI 补丁和最后验证版本仅供历史查阅。
+源码模式默认 Web preset 为 dsh 自带的 `standard`，可通过 `--preset` 选择
+`ptc` / `minimal` / `cordis`。归档中的 TUI 补丁与第三方 preset 记录仅供历史查阅。
 
 ## 最近更新：跨设备 DSH Web
 
@@ -132,7 +129,7 @@ node scripts/install.mjs --source --update
 ```bash
 curl -fsSL .../install.sh | bash -s -- \
   --root ~/.local/share/dsh-agent-society-combo \
-  --preset anchored-standard
+  --preset standard
 ```
 
 | 参数 | 默认 | 说明 |
@@ -143,7 +140,7 @@ curl -fsSL .../install.sh | bash -s -- \
 | `--without-host` | 关闭 | 明确不安装可选 Host |
 | `--dsh-package <spec>` | `@deepseek-ai/dsh` | npm 模式的 dsh 包名 |
 | `--plugin <spec>` | `@agent-society/dsh-agent-society` | npm 模式的 AgentSociety 插件 |
-| `--preset <id>` | `anchored-standard` | source 模式默认 Web preset |
+| `--preset <id>` | `standard` | source 模式的 dsh 内置 Web preset |
 | `--patch-only` | 关闭 | 只 clone + patch + 文件覆盖，适合 CI |
 | `--skip-deps` | 关闭 | 跳过 npm/pnpm install |
 | `--skip-build` | 关闭 | 跳过构建 |
@@ -152,16 +149,14 @@ curl -fsSL .../install.sh | bash -s -- \
 | `--force-build` | 关闭 | 即使已有构建产物也重新构建 |
 | `--update` | 关闭 | 按当前 lock 更新已安装组件，变化项自动重装依赖与构建 |
 | `--with-ssh [spec]` | 关闭 | 向 `web` profile 追加 SSH 插件；source 模式使用兼容的 `agent-society-web` |
-| `--with-opencode-full` | 关闭 | 安装 dsh-opencode-full bundle，并把 web profile 默认 preset 切换为 `opencode-full` |
 | `--dry-run` | 关闭 | 只打印安装计划 |
 
 环境变量：
 
 ```bash
 COMBO_ROOT=~/.local/share/dsh-agent-society-combo
-COMBO_PRESET=anchored-standard
+COMBO_PRESET=standard
 COMBO_BIN=~/.local/bin
-COMBO_OPENCODE_FULL=0
 DSH_HOME=~/.dsh
 COMBO_MODE=npm
 COMBO_WITH_HOST=0
@@ -272,29 +267,6 @@ curl -fsSL https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society
   | bash -s -- --dry-run --root "$HOME/.local/share/dsh-agent-society-combo"
 ```
 
-## OpenCode Full 插件
-
-可选安装 [dsh-opencode-full](https://github.com/Fantasia-Infinity/dsh-opencode-full)：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Fantasia-Infinity/dsh-agent-society-combo/main/install.sh \
-  | bash -s -- --with-opencode-full
-```
-
-安装后 npm `web`（source 模式为兼容的 `agent-society-web`）默认使用
-`opencode-full` preset，补齐：
-
-- `web_fetch`：抓取并阅读网页正文
-- `lsp`：`goToDefinition` / `findReferences` / `goToImplementation` / `hover`
-- `apply_patch`：OpenCode 风格 patch，基于 `git apply --check/apply`
-- 全量工具默认常驻，不再需要 `dev_tool_search` 解锁
-- 只读 `subagent_explore`
-
-安装器会探测本机的 `typescript-language-server` / `pyright-langserver` /
-`vscode-json-languageserver` 并写入 profile patch；没有 language server 时
-`lsp` 工具会返回 `LSP_UNAVAILABLE`，但 profile 可以正常启动。
-`--with-opencode-full` 与 `--with-ssh` 可叠加。
-
 ## 可选 SSH 运维插件
 
 安装器默认就会创建 Web core profile：
@@ -389,6 +361,7 @@ node scripts/doctor.mjs --root /tmp/combo-patch-test
 ## 边界
 
 - 不修改 deepseek-harness 上游仓库；dsh-TUI 已退出当前维护范围，见归档；
+- 不管理第三方 preset 仓库、复制或 LSP 配置；已有文件保留，后续兼容性由对应上游负责；
 - patch 只保留运行时必需差异，不携带个人 notes、文档草稿；
 - 升级组合前先在 macOS / Linux / Windows CI 上验证 `--patch-only`，
   并在 macOS / Linux 上验证完整安装。

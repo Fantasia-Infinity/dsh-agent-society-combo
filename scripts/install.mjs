@@ -30,7 +30,7 @@ import {
 import { createHash } from 'node:crypto'
 import { homedir, platform, arch } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -85,7 +85,6 @@ function parseArgs(argv) {
     update: false,
     withSsh: false,
     sshPlugin: process.env.COMBO_SSH_PLUGIN || 'dsh-ssh-ops@0.2.1',
-    withOpenCodeFull: process.env.COMBO_OPENCODE_FULL === '1',
     withSubscriptions: process.env.COMBO_SUBSCRIPTIONS === '1',
     withHost: process.env.COMBO_WITH_HOST === '1',
     withHostExplicit: process.env.COMBO_WITH_HOST === '1',
@@ -126,7 +125,7 @@ function parseArgs(argv) {
     else if (arg === '--update') result.update = true
     else if (arg === '--with-ssh') { result.withSsh = true; if (next && !next.startsWith('--')) { result.sshPlugin = next; index += 1 } }
     else if (arg.startsWith('--with-ssh=')) { result.withSsh = true; result.sshPlugin = arg.slice(11) }
-    else if (arg === '--with-opencode-full') result.withOpenCodeFull = true
+    else if (arg === '--with-opencode-full') throw new Error('--with-opencode-full has been retired; see archive/third-party-presets/README.md.')
     else if (arg === '--with-subscriptions') result.withSubscriptions = true
     else if (arg === '--with-host') { result.withHost = true; result.withHostExplicit = true }
     else if (arg === '--without-host') { result.withHost = false; result.withHostExplicit = true }
@@ -155,8 +154,7 @@ Modes:
 
 Options:
   --root <dir>        install root (default ~/.local/share/dsh-agent-society-combo)
-  --preset <id>       source Web preset: anchored-standard (default), standard,
-                      ptc, minimal, or cordis
+  --preset <id>       source Web preset: standard (default), ptc, minimal, or cordis
   --source <name>=<path>
                       source mode; use an existing checkout instead of cloning
   --patch-only        clone + patch only; no dependency install/build/link
@@ -168,9 +166,6 @@ Options:
   --update            refresh this install to the current sources.lock.json
   --with-ssh [spec]   add an SSH ops plugin to the web profile
                       (source mode uses agent-society-web; default dsh-ssh-ops@0.2.1)
-  --with-opencode-full
-                      add the dsh-opencode-full bundle and switch the web
-                      profile default preset to opencode-full
   --with-subscriptions
                       add dsh-plugin-subscriptions (ChatGPT/Claude/Grok
                       subscription LLM providers) to the web profile
@@ -294,8 +289,6 @@ async function installSourceMode() {
   const components = [
     'deepseek-harness',
     'agent-society',
-    'dsh-anchored-standard',
-    ...(options.withOpenCodeFull ? ['dsh-opencode-full'] : []),
   ]
   const changed = new Set()
   for (const name of components) {
@@ -309,21 +302,16 @@ async function installSourceMode() {
 
   const harness = componentDir('deepseek-harness')
   const agentSociety = componentDir('agent-society')
-  const openCodeFull = options.withOpenCodeFull
-    ? componentDir('dsh-opencode-full')
-    : undefined
 
-  if (!options.skipDeps) await installDependencies(harness, agentSociety, openCodeFull, changed)
-  if (!options.skipBuild) await buildAll(harness, agentSociety, openCodeFull, changed)
+  if (!options.skipDeps) await installDependencies(harness, agentSociety, changed)
+  if (!options.skipBuild) await buildAll(harness, agentSociety, changed)
   if (!options.skipLinks) {
     await createLinks(harness, agentSociety)
-    if (openCodeFull) await createOpenCodeFullLinks(openCodeFull)
     await ensureWebProfile(
       harness,
       agentSociety,
       options.withSsh ? options.sshPlugin : undefined,
       options.preset,
-      openCodeFull,
       options.withSubscriptions,
     )
     writeComboLauncher()
@@ -341,9 +329,6 @@ async function installSourceMode() {
   console.log('Install complete.')
   console.log('  dsh:      ' + join(binDir, platform() === 'win32' ? 'dsh.cmd' : 'dsh'))
   console.log('  agent:    ' + join(binDir, platform() === 'win32' ? 'agent.cmd' : 'agent'))
-  if (openCodeFull) {
-    console.log('  preset:   opencode-full (web default)')
-  }
   console.log('')
   console.log('Next steps:')
   console.log('  1. Make sure "' + binDir + '" is on PATH.')
@@ -370,8 +355,6 @@ function printPlan() {
   const names = [
     'deepseek-harness',
     'agent-society',
-    'dsh-anchored-standard',
-    ...(options.withOpenCodeFull ? ['dsh-opencode-full'] : []),
   ]
   console.log('Plan:')
   for (const name of names) {
@@ -380,13 +363,9 @@ function printPlan() {
     for (const patch of comp.patches) console.log(`    apply ${patch.path}`)
   }
   console.log('  link ~/.dsh/plugins/agent-society')
-  console.log('  copy ~/.dsh/.agent-presets/anchored-standard')
   console.log('  links: dsh, agent')
   console.log(`  web profiles: web + agent-society-web (core dsh-agent-society, preset ${options.preset})` + (options.withSsh ? ` + ${options.sshPlugin}` : ''))
   console.log('  headless profile: headless (core dsh-agent-society)')
-  if (options.withOpenCodeFull) {
-    console.log('  opencode-full: bundle + preset + web default preset')
-  }
 }
 
 function resolveDshInvocation() {
@@ -646,7 +625,7 @@ function restoreUserData(dir, backup) {
   }
 }
 
-async function installDependencies(harness, agentSociety, openCodeFull, changed) {
+async function installDependencies(harness, agentSociety, changed) {
   const installHarness = changed.has('deepseek-harness') || !existsSync(join(harness, 'node_modules', '.pnpm'))
   console.log(installHarness ? '[deps] deepseek-harness pnpm install' : '[skip] deepseek-harness node_modules current')
   if (installHarness) pnpm(harness, ['install', '--frozen-lockfile'])
@@ -715,11 +694,6 @@ async function installDependencies(harness, agentSociety, openCodeFull, changed)
     }
   }
 
-  if (openCodeFull) {
-    const installOpenCodeFull = changed.has('dsh-opencode-full') || !existsSync(join(openCodeFull, 'node_modules', 'typescript'))
-    console.log(installOpenCodeFull ? '[deps] dsh-opencode-full npm ci' : '[skip] dsh-opencode-full node_modules current')
-    if (installOpenCodeFull) runChecked('npm', ['ci'], openCodeFull)
-  }
 }
 
 function installSourcePackageWithoutLocalDependency(packageDir, dependency) {
@@ -781,7 +755,7 @@ function linkLocalDshPackages(harness, pluginDir) {
   console.log(`[link] ${seen.size} local DSH packages -> ${packageRoot}`)
 }
 
-async function buildAll(harness, agentSociety, openCodeFull, changed) {
+async function buildAll(harness, agentSociety, changed) {
   const harnessBin = join(harness, 'apps', 'cli', 'lib', 'bin.js')
   const bootLib = join(harness, 'packages', 'boot', 'app-boot', 'lib', 'index.js')
   // Client-face packages (@deepseek-ai/dsh-typert-registry,
@@ -858,31 +832,16 @@ async function buildAll(harness, agentSociety, openCodeFull, changed) {
   console.log('[build] AgentSociety dsh-plugin')
   runChecked('npm', ['run', 'build'], join(agentSociety, 'dsh-plugin'))
 
-  if (openCodeFull) {
-    const lib = join(openCodeFull, 'lib', 'apply-patch.js')
-    if (options.forceBuild || changed.has('dsh-opencode-full') || !existsSync(lib)) {
-      console.log('[build] dsh-opencode-full')
-      runChecked('npm', ['run', 'build'], openCodeFull)
-    } else {
-      console.log('[skip] dsh-opencode-full already built')
-    }
-  }
 }
 
 async function createLinks(harness, agentSociety) {
   ensureDir(binDir)
   ensureDir(join(dshHome, 'plugins'))
-  ensureDir(join(dshHome, '.agent-presets'))
 
   const pluginSource = join(agentSociety, 'dsh-plugin')
   const pluginLink = join(dshHome, 'plugins', 'agent-society')
   console.log(`[link] ${pluginLink} -> ${pluginSource}`)
   linkOrCopy(pluginSource, pluginLink)
-
-  const presetSource = join(componentDir('dsh-anchored-standard'))
-  const presetDest = join(dshHome, '.agent-presets', 'anchored-standard')
-  console.log(`[preset] copy anchored-standard -> ${presetDest}`)
-  copyPreset(presetSource, presetDest)
 
   if (platform() === 'win32') {
     writeCmd('dsh', ['node', join(harness, 'apps', 'cli', 'lib', 'bin.js')])
@@ -975,30 +934,7 @@ function linkLocalPackage(source, packageDir, packageName) {
   console.log('[link] ' + target + ' -> ' + source)
 }
 
-async function loadOpenCodeFullInstallKit(openCodeFull) {
-  return await import(pathToFileURL(join(openCodeFull, 'scripts', 'install-kit.mjs')).href)
-}
-
-async function createOpenCodeFullLinks(openCodeFull) {
-  ensureDir(join(dshHome, '.agent-presets'))
-  const source = join(openCodeFull, 'presets', 'opencode-full')
-  const dest = join(dshHome, '.agent-presets', 'opencode-full')
-  const kit = await loadOpenCodeFullInstallKit(openCodeFull)
-  kit.atomicCopyDir(source, dest)
-  console.log(`[preset] copy opencode-full -> ${dest}`)
-}
-
-async function detectOpenCodeFullLspServers(openCodeFull) {
-  try {
-    const module = await import(pathToFileURL(join(openCodeFull, 'scripts', 'lsp-detect.mjs')).href)
-    return module.detectLspServers()
-  } catch (error) {
-    console.warn(`[warn] could not run dsh-opencode-full lsp detection: ${error instanceof Error ? error.message : String(error)}`)
-    return {}
-  }
-}
-
-async function ensureWebProfile(harness, agentSociety, sshSpec, preset, openCodeFull, withSubscriptions) {
+async function ensureWebProfile(harness, agentSociety, sshSpec, preset, withSubscriptions) {
   const profile =
     process.env.COMBO_WEB_PROFILE ||
     process.env.COMBO_SSH_PROFILE ||
@@ -1013,23 +949,6 @@ async function ensureWebProfile(harness, agentSociety, sshSpec, preset, openCode
     '@deepseek-ai/dsh-web-app',
     corePlugin,
   ]
-  if (openCodeFull) {
-    const openCodeFullPlugin = '@fantasia-infinity/dsh-opencode-full'
-    dependencies[openCodeFullPlugin] = `link:${openCodeFull}`
-    bundles.push(openCodeFullPlugin)
-    // The dsh profile resolver resolves bundle-row package names from the
-    // profile directory, not through a linked bundle's own node_modules.
-    // Pin the LSP stack to the managed harness checkout so the composed
-    // versions match the pinned deepseek-harness commit exactly.
-    for (const [lspPackage, lspDir] of [
-      ['dsh-lsp', 'lsp'],
-      ['dsh-lsp-stdio', 'lsp-stdio'],
-      ['dsh-tool-lsp', 'tool-lsp'],
-    ]) {
-      dependencies[`@deepseek-ai/${lspPackage}`] =
-        `link:${join(harness, 'packages', 'lsp', lspDir)}`
-    }
-  }
   let sshName
   if (sshSpec) {
     const at = sshSpec.lastIndexOf('@')
@@ -1047,8 +966,8 @@ async function ensureWebProfile(harness, agentSociety, sshSpec, preset, openCode
     bundles.push('dsh-plugin-subscriptions')
   }
   const profileDir = join(dshHome, 'profiles', profile)
-  const presetName = openCodeFull ? 'opencode-full' : preset
-  console.log(`[web] profile ${profile} core=${corePlugin} preset=${presetName}${openCodeFull ? ' opencode-full' : ''}${sshName ? ` ssh=${sshName}` : ''}${withSubscriptions ? ' subscriptions' : ''}`)
+  const presetName = preset
+  console.log(`[web] profile ${profile} core=${corePlugin} preset=${presetName}${sshName ? ` ssh=${sshName}` : ''}${withSubscriptions ? ' subscriptions' : ''}`)
   ensureDir(profileDir)
   ensureDir(binDir)
   const packageJson = {
@@ -1068,14 +987,8 @@ async function ensureWebProfile(harness, agentSociety, sshSpec, preset, openCode
       : `packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n`,
   )
   writeFileSync(join(profileDir, 'cordis.yml'), '# generated by dsh-agent-society-combo\n[]\n')
-  const lspServers = openCodeFull
-    ? await detectOpenCodeFullLspServers(openCodeFull)
-    : {}
-  const installKit = openCodeFull
-    ? await loadOpenCodeFullInstallKit(openCodeFull)
-    : undefined
   const patchFile = join(profileDir, 'cordis.patch.yml')
-  let managedPatch =
+  const managedPatch =
     '# Generated by dsh-agent-society-combo; re-running the installer regenerates this file.\n' +
     '# Machine-local overrides belong in $DSH_HOME/cordis.patch.yml.\n' +
     '- id: agent-presets\n' +
@@ -1086,8 +999,6 @@ async function ensureWebProfile(harness, agentSociety, sshSpec, preset, openCode
     '  config:\n' +
     "    root: !!js dshHomePath('sessions')\n" +
     "    compression: !!js process.env.AGENT_SOCIETY_SESSION_COMPRESSION || 'zstd'\n"
-  const lspBlock = installKit?.renderLspServerBlock(lspServers) ?? ''
-  if (lspBlock) managedPatch += `\n${lspBlock}\n`
   if (existsSync(patchFile) && readFileSync(patchFile, 'utf8') !== managedPatch) {
     const backup = `${patchFile}.combo-backup-${Date.now()}`
     writeFileSync(backup, readFileSync(patchFile, 'utf8'))
@@ -1105,9 +1016,6 @@ async function ensureWebProfile(harness, agentSociety, sshSpec, preset, openCode
     console.log(`[web] ${corePlugin} registered in profile ${profile}`)
   } else {
     console.warn(`[warn] could not verify ${corePlugin} in profile ${profile}`)
-  }
-  if (openCodeFull && probe.status === 0 && probe.stdout.includes('@fantasia-infinity/dsh-opencode-full')) {
-    console.log(`[web] dsh-opencode-full registered in profile ${profile}`)
   }
   if (sshName && probe.status === 0 && probe.stdout.includes(sshName)) {
     console.log(`[ssh] ${sshName} registered in profile ${profile}`)
@@ -1197,34 +1105,6 @@ function writeCmd(name, command) {
 
 function quoteCmd(value) {
   return `"${String(value).replaceAll('"', '""')}"`
-}
-
-function copyPreset(source, dest) {
-  // The preset repo keeps its files either at the repo root or under
-  // `preset/` depending on the pinned commit. Copy the whole directory
-  // instead of a fixed file list so newly added helper scripts (e.g.
-  // context-gate.mjs) travel with the preset.
-  const sourceDir = existsSync(join(source, 'preset.yml'))
-    ? source
-    : existsSync(join(source, 'preset', 'preset.yml'))
-      ? join(source, 'preset')
-      : undefined
-  if (!sourceDir) {
-    throw new Error(`preset source not found under ${source}`)
-  }
-  const entries = readdirSync(sourceDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile())
-    .map((entry) => entry.name)
-  for (const required of ['agent.cordis.yml', 'preset.yml']) {
-    if (!entries.includes(required)) {
-      throw new Error(`preset file missing: ${join(sourceDir, required)}`)
-    }
-  }
-  rmSync(dest, { recursive: true, force: true })
-  ensureDir(dest)
-  for (const name of entries) {
-    copyFileSync(join(sourceDir, name), join(dest, name))
-  }
 }
 
 function nativeAddonBuilt(platformDir) {

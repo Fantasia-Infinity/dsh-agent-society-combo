@@ -378,10 +378,8 @@ function doctorSource() {
   const components = manifest.components || {};
   for (const [name, component] of Object.entries(components)) {
     const dir = join(root, "sources", name);
-    const optional = name === "dsh-opencode-full";
     const checkout = existsSync(join(dir, ".git"));
     const stateFile = join(root, "state", name + ".json");
-    if (optional && !checkout && !existsSync(stateFile)) continue;
     check(name + " checkout", checkout, dir);
     check(name + " state", existsSync(stateFile), stateFile);
     if (checkout) {

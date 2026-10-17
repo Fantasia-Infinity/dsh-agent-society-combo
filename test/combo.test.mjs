@@ -26,6 +26,7 @@ test("source dry-run adapts dsh without scheduling the archived TUI", () => {
   assert.match(output, /deepseek-harness/u);
   assert.match(output, /1b316d0444450d484ade4c1da76f9224d33251bc/u);
   assert.doesNotMatch(output, /dsh-tui|TUI|\.dsh-tui/iu);
+  assert.doesNotMatch(output, /anchored-standard|opencode-full/iu);
   assert.match(output, /0003-dsh-first-runtime\.patch/u);
   assert.match(output, /0009-dsh-0\.1\.7-rc2-api-compat\.patch/u);
   assert.doesNotMatch(output, /0001-standalone-source-launcher\.patch/u);
@@ -42,6 +43,26 @@ test("retired TUI source overrides fail before installation", () => {
   assert.match(result.stderr, /Unknown source component "dsh-tui"/u);
 });
 
+test("retired preset installation options fail before installation", () => {
+  for (const args of [
+    ["--with-opencode-full"],
+    ["--preset", "anchored-standard"],
+    ["--source", "dsh-anchored-standard=/unused"],
+    ["--source", "dsh-opencode-full=/unused"],
+  ]) {
+    const result = spawnSync(process.execPath, [join(rootDir, "scripts/install.mjs"), ...args, "--dry-run"], { encoding: "utf8" });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /retired|Unknown source component|Unsupported preset/u);
+    assert.doesNotMatch(result.stdout, /\[clone\]|\[build\]/u);
+  }
+});
+
+test("active source maintenance includes only Harness and AgentSociety", async () => {
+  const manifest = JSON.parse(await readFile(join(rootDir, "sources.lock.json"), "utf8"));
+  assert.deepEqual(Object.keys(manifest.components).sort(), ["agent-society", "deepseek-harness"]);
+  assert.equal(manifest.defaultPreset, "standard");
+});
+
 test("archived TUI manifests retain verifiable patch and launcher contents", async () => {
   const archive = JSON.parse(await readFile(join(rootDir, "archive/dsh-tui/sources.lock.json"), "utf8"));
   const component = archive.components["dsh-tui"];
@@ -53,7 +74,7 @@ test("archived TUI manifests retain verifiable patch and launcher contents", asy
   assert.equal(Object.hasOwn(active.components, "dsh-tui"), false);
 });
 
-test("source update leaves an existing TUI installation and its preferences untouched", async () => {
+test("source update preserves retired checkouts, launchers, profiles, and presets", async () => {
   const temp = await mkdtemp(join(tmpdir(), "combo-retired-"));
   const installRoot = join(temp, "combo");
   const dshHome = join(temp, "dsh");
@@ -66,9 +87,15 @@ test("source update leaves an existing TUI installation and its preferences unto
       join(dshHome, "profiles/dsh-tui/cordis.patch.yml"),
       join(bin, "dsh-tui"),
       join(userHome, ".dsh-tui/agent-preset.json"),
+      join(installRoot, "sources/dsh-anchored-standard/keep.txt"),
+      join(installRoot, "sources/dsh-opencode-full/keep.txt"),
+      join(installRoot, "state/dsh-anchored-standard.json"),
+      join(installRoot, "state/dsh-opencode-full.json"),
+      join(dshHome, ".agent-presets/anchored-standard/preset.yml"),
+      join(dshHome, ".agent-presets/opencode-full/preset.yml"),
     ];
     const overrides = [];
-    for (const name of ["deepseek-harness", "agent-society", "dsh-anchored-standard"]) {
+    for (const name of ["deepseek-harness", "agent-society"]) {
       const source = join(temp, name);
       await mkdir(source, { recursive: true });
       overrides.push("--source", `${name}=${source}`);
@@ -84,11 +111,12 @@ test("source update leaves an existing TUI installation and its preferences unto
     });
     assert.match(output, /Install complete/u);
     assert.doesNotMatch(output, /dsh-tui|TUI|\.dsh-tui/iu);
+    assert.doesNotMatch(output, /anchored-standard|opencode-full/iu);
     for (const path of sentinels) assert.equal(await readFile(path, "utf8"), "preserve existing TUI data\n");
     const report = spawnSync(process.execPath, [join(rootDir, "scripts/doctor.mjs"), "--root", installRoot, "--json"], {
       env: { ...process.env, DSH_HOME: dshHome }, encoding: "utf8",
     });
-    assert.equal(JSON.parse(report.stdout).checks.some(item => /tui/iu.test(item.name)), false);
+    assert.equal(JSON.parse(report.stdout).checks.some(item => /tui|anchored-standard|opencode-full/iu.test(item.name)), false);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }

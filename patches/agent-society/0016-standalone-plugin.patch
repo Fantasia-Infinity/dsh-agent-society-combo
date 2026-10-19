@@ -1,0 +1,291 @@
+diff --git a/agent-host/package.json b/agent-host/package.json
+index c0ad14b..3191158 100644
+--- a/agent-host/package.json
++++ b/agent-host/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@agent-society/agent-host",
+-  "version": "0.1.2",
++  "version": "0.2.0",
+   "type": "module",
+   "description": "Optional thin AgentSociety management host for dsh",
+   "license": "MIT",
+diff --git a/agent-host/scripts/setup.mjs b/agent-host/scripts/setup.mjs
+index 5fd26ff..1167174 100755
+--- a/agent-host/scripts/setup.mjs
++++ b/agent-host/scripts/setup.mjs
+@@ -194,6 +194,9 @@ function oldCentralConfigPath() {
+ }
+ 
+ function bootstrapRuntime() {
++  if (process.env.AGENT_RUNTIME_MODE !== "source" || !existsSync(resolve(repositoryRoot, ".git"))) {
++    throw new Error("Prebuilt installation: reinstall the AgentSociety Host package to repair it. dsh is managed separately; no source bootstrap is required.");
++  }
+   run(npmCommand(), ["ci", "--ignore-scripts"]);
+   run(process.execPath, ["scripts/patch-pi-brace-expansion.mjs"]);
+   run(process.execPath, ["scripts/patch-pi-brace-expansion.mjs", "--check"]);
+diff --git a/agent-host/src/cli.ts b/agent-host/src/cli.ts
+index b0fc767..bcc8edb 100644
+--- a/agent-host/src/cli.ts
++++ b/agent-host/src/cli.ts
+@@ -8,6 +8,7 @@ import {
+   existsSync,
+   mkdirSync,
+   readFileSync,
++  readdirSync,
+   realpathSync,
+   writeFileSync,
+ } from "node:fs";
+@@ -1081,39 +1082,33 @@ function runPublishedUpdate(): void {
+   if (!["npm", "pnpm"].includes(packageManager)) {
+     throw new Error("AGENT_PACKAGE_MANAGER must be npm or pnpm");
+   }
+-  const dshPackage =
+-    process.env.AGENT_DSH_PACKAGE?.trim() || "@deepseek-ai/dsh";
+-  const dshSpec =
+-    process.env.AGENT_DSH_PACKAGE_SPEC?.trim() ||
+-    dshPackage + "@" + (process.env.AGENT_DSH_VERSION?.trim() || "0.1.2-alpha.2");
+   const hostSpec =
+     process.env.AGENT_HOST_PACKAGE?.trim() || "@agent-society/agent-host";
+   const installArgs =
+     packageManager === "pnpm"
+-      ? ["add", "--global", dshSpec, hostSpec]
+-      : ["install", "--global", dshSpec, hostSpec];
++      ? ["add", "--global", hostSpec]
++      : ["install", "--global", hostSpec];
+   runPackageCommand(packageManager, installArgs);
+ 
+   const dsh = resolveManagementDsh();
+   const plugin =
+     process.env.AGENT_DSH_PLUGIN_PACKAGE?.trim() ||
+     "@agent-society/dsh-agent-society";
+-  for (const profile of ["web", "headless", "agent-society-worker"]) {
++  const profilesRoot = resolve(process.env.DSH_HOME || resolve(homedir(), ".dsh"), "profiles");
++  const profiles = existsSync(profilesRoot) ? readdirSync(profilesRoot).filter(profile => {
++    const file = resolve(profilesRoot, profile, "package.json");
++    return existsSync(file) && Object.hasOwn(JSON.parse(readFileSync(file, "utf8")).dependencies || {}, "@agent-society/dsh-agent-society");
++  }) : [];
++  for (const profile of profiles) {
+     const updated = spawnSync(
+       dsh[0]!,
+       [...dsh.slice(1), "plugin", "--profile", profile, "update", plugin],
+       { cwd: process.cwd(), env: process.env, stdio: "inherit", windowsHide: true },
+     );
+-    if (updated.status !== 0) {
+-      console.warn(
+-        "dsh profile " +
+-          profile +
+-          " has no existing plugin entry; trying add instead",
+-      );
+-      runManagementDsh(["plugin", "--profile", profile, "add", plugin]);
+-    }
++    if (updated.error) throw updated.error;
++    if (updated.status !== 0) throw new Error("AgentSociety update failed for profile " + profile);
+   }
+-  console.log("dsh, agent-host, and installed AgentSociety profiles are up to date.");
++  console.log("AgentSociety Host and profiles updated. Upgrade dsh separately.");
+ }
+ 
+ function runPackageCommand(command: string, args: string[]): void {
+diff --git a/dsh-plugin/cordis.patch.yml b/dsh-plugin/cordis.patch.yml
+index 4be7fc2..0b64203 100644
+--- a/dsh-plugin/cordis.patch.yml
++++ b/dsh-plugin/cordis.patch.yml
+@@ -1,8 +1,6 @@
+ # AgentSociety dsh bundle.
+ #
+-# Worker row: enabled only when the dsh launcher selects the dedicated
+-# agent-society-worker profile. The profile fact is launch-scoped; it never
+-# requires AGENT_SOCIETY_WORKER=1 in the global $DSH_HOME/.env.
++# Worker activation uses the official launcher's profileContext service.
+ - insert:
+     # Load the shared $DSH_HOME/.env and resolve credentials before all
+     # AgentSociety rows inspect process.env.
+@@ -11,7 +9,7 @@
+ 
+     - id: agent-society-worker
+       name: '@agent-society/dsh-agent-society/worker'
+-      disabled: !!js process.env.DSH_PROFILE !== 'agent-society-worker'
++      disabled: !!js "ctx.get('profileContext')?.name !== 'agent-society-worker'"
+       config:
+         hubUrl: !!js process.env.AGENT_SOCIETY_HUB_URL
+         hubTokenEnv: 'AGENT_SOCIETY_HUB_TOKEN'
+@@ -55,12 +53,6 @@
+         reconnect:
+           enabled: true
+ 
+-    # Keep web_search visible even when a preset filters the assembled
+-    # catalog. With AGENT_SOCIETY_WEB_SEARCH=0 the same guard removes it
+-    # from every assembled catalog.
+-    - id: agent-society-web-tool-guard
+-      name: '@agent-society/dsh-agent-society/web-tool-guard'
+-
+     # Interactive-session consensus digests: detect the end of a manual
+     # TUI/Web interaction round and append an LLM-summarized digest.
+     - id: agent-society-session-digest
+@@ -135,24 +127,3 @@
+         nodeId: !!js process.env.AGENT_SOCIETY_NODE_ID
+         workspaceRoot: !!js process.env.AGENT_SOCIETY_WORKSPACE_ROOT ?? process.cwd()
+         pollSeconds: !!js Number(process.env.AGENT_SOCIETY_TASK_POLL_SECONDS ?? 10)
+-
+-# Host-level DeepSeek web tool. The provider services stay mounted because
+-# presets may register their own tool-web row; disabling the host tool plus
+-# the assembly guard is enough to keep web_search out of the model catalog.
+-- id: tool-web
+-  disabled: !!js process.env.AGENT_SOCIETY_WEB_SEARCH === '0'
+-
+-# Readable transcripts: the worker attaches these to Hub runs and `agent
+-# observe` reads them locally. zstd remains available by setting
+-# AGENT_SOCIETY_SESSION_COMPRESSION=zstd.
+-- id: session-persistence-jsonl
+-  config:
+-    root: !!js dshHomePath('sessions')
+-    compression: !!js process.env.AGENT_SOCIETY_SESSION_COMPRESSION || 'none'
+-
+-# Process-wide default matches the worker policy. Per-task `input.tool_policy`
+-# overrides are appended as `sandbox/mode` events on the session itself.
+-- id: sandbox-policy
+-  config:
+-    mode: !!js "(process.env.AGENT_SOCIETY_TOOL_POLICY === 'full' ? 'workspace-write' : 'read-only')"
+-    workspaceRoot: !!js process.env.AGENT_SOCIETY_WORKSPACE_ROOT ?? process.cwd()
+diff --git a/dsh-plugin/package.json b/dsh-plugin/package.json
+index f36f0a8..6c5bcca 100644
+--- a/dsh-plugin/package.json
++++ b/dsh-plugin/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@agent-society/dsh-agent-society",
+-  "version": "0.2.0",
++  "version": "0.3.0",
+   "description": "AgentSociety Hub worker and dispatch tools as a DeepSeek Harness bundle",
+   "license": "MIT",
+   "publishConfig": {
+diff --git a/dsh-plugin/src/config-plugin.ts b/dsh-plugin/src/config-plugin.ts
+index 9ab23eb..d461ea0 100644
+--- a/dsh-plugin/src/config-plugin.ts
++++ b/dsh-plugin/src/config-plugin.ts
+@@ -7,7 +7,6 @@ import {
+ import { homedir } from "node:os";
+ import { join, resolve } from "node:path";
+ import { recordAgentSocietyMetrics } from "./context-metrics.js";
+-import { deepSeekMessagesEndpoint } from "./deepseek-endpoint.js";
+ 
+ export const name = "agent-society-config";
+ export const inject: string[] = [];
+@@ -75,16 +74,8 @@ export function apply(ctx: Context): void {
+       );
+     }
+   }
+-  // The native dsh DeepSeek adapter owns these names. The shared AgentSociety
+-  // credential/config namespace is resolved first so direct `dsh web` and
+-  // Host-launched dsh children receive the same model configuration without
+-  // persisting a secret in `$DSH_HOME/.env`.
+-  if (!process.env.DEEPSEEK_API_KEY && process.env.AGENT_REMOTE_API_KEY) {
+-    process.env.DEEPSEEK_API_KEY = process.env.AGENT_REMOTE_API_KEY;
+-  }
+-  if (!process.env.DEEPSEEK_BASE_URL && process.env.AGENT_REMOTE_BASE_URL) {
+-    process.env.DEEPSEEK_BASE_URL = deepSeekMessagesEndpoint(process.env.AGENT_REMOTE_BASE_URL);
+-  }
++  // Host model settings and credentials remain owned by dsh. AgentSociety
++  // credentials configure only this plugin's Hub and delegated operations.
+   copy("AGENT_HUB_URL", "AGENT_SOCIETY_HUB_URL");
+   copy("AGENT_WORKSPACE_ROOT", "AGENT_SOCIETY_WORKSPACE_ROOT");
+   copy("AGENT_ACTOR_ID", "AGENT_SOCIETY_ACTOR_ID");
+diff --git a/dsh-plugin/src/hub-client.ts b/dsh-plugin/src/hub-client.ts
+index 0f35619..1f89a1b 100644
+--- a/dsh-plugin/src/hub-client.ts
++++ b/dsh-plugin/src/hub-client.ts
+@@ -439,7 +439,7 @@ export class HubClient {
+     if (!response.ok) {
+       const detail = await response.text().catch(() => "");
+       throw new HubError(
+-        `Hub request ${path} failed (${response.status})${detail ? `: ${detail.slice(0, 500)}` : ""}`,
++        `Hub request ${path} failed (${response.status})${detail ? `: ${detail.slice(0, 500)}` : ""}${response.status === 401 ? "; Hub credential rejected. Run agent connect to sign in again." : ""}`,
+         response.status,
+       );
+     }
+diff --git a/dsh-plugin/src/self-update.ts b/dsh-plugin/src/self-update.ts
+index 875d234..9f519e5 100644
+--- a/dsh-plugin/src/self-update.ts
++++ b/dsh-plugin/src/self-update.ts
+@@ -20,6 +20,7 @@ import {
+   statSync,
+ } from 'node:fs'
+ import { dirname, resolve } from 'node:path'
++import { homedir } from 'node:os'
+ 
+ import type { HubTask } from './hub-client.js'
+ 
+@@ -147,11 +148,6 @@ async function runPublishedSelfUpdate(
+   record: (label: string, output: string) => void,
+ ): Promise<PluginSelfUpdateReport> {
+   const npm = resolveNpm(nodePath)
+-  const dshPackage =
+-    process.env.AGENT_DSH_PACKAGE?.trim() || "@deepseek-ai/dsh"
+-  const dshSpec =
+-    process.env.AGENT_DSH_PACKAGE_SPEC?.trim() ||
+-    dshPackage + "@" + (process.env.AGENT_DSH_VERSION?.trim() || "0.1.2-alpha.2")
+   const hostSpec =
+     process.env.AGENT_HOST_PACKAGE_SPEC?.trim() ||
+     process.env.AGENT_HOST_PACKAGE?.trim() ||
+@@ -160,19 +156,17 @@ async function runPublishedSelfUpdate(
+     process.env.AGENT_DSH_PLUGIN_PACKAGE_SPEC?.trim() ||
+     '@agent-society/dsh-agent-society@latest'
+   const updateHost = shouldUpdateHost()
+-  const packages = [dshSpec, pluginSpec]
+-  if (updateHost) packages.push(hostSpec)
+-  await runNpm(
+-    npm,
+-    process.cwd(),
+-    ['install', '--global', ...packages],
+-    'npm update',
+-    record,
+-  )
++  if (updateHost) {
++    await runNpm(npm, process.cwd(), ['install', '--global', hostSpec], 'Update AgentSociety Host', record)
++  }
+   const dsh = resolveDshInvocation(nodePath)
+   const profileSteps: string[] = []
+-  for (const profile of ['web', 'headless', 'agent-society-worker']) {
+-    try {
++  const profilesRoot = resolve(process.env.DSH_HOME || resolve(homedir(), '.dsh'), 'profiles')
++  const profiles = existsSync(profilesRoot) ? readdirSync(profilesRoot).filter(profile => {
++    const file = resolve(profilesRoot, profile, 'package.json')
++    return existsSync(file) && Object.hasOwn(JSON.parse(readFileSync(file, 'utf8')).dependencies || {}, '@agent-society/dsh-agent-society')
++  }) : []
++  for (const profile of profiles) {
+       await run(
+         process.cwd(),
+         dsh.command,
+@@ -181,30 +175,13 @@ async function runPublishedSelfUpdate(
+         record,
+       )
+       profileSteps.push(`${profile}: updated`)
+-    } catch (error) {
+-      // `update` intentionally fails when an older installation has not yet
+-      // created the profile entry. In that case add the same published plugin
+-      // so a remote self-update repairs old Combo installs as well.
+-      record(
+-        `Update dsh ${profile} profile`,
+-        error instanceof Error ? error.message : String(error),
+-      )
+-      await run(
+-        process.cwd(),
+-        dsh.command,
+-        [...dsh.args, 'plugin', '--profile', profile, 'add', pluginSpec],
+-        `Add dsh ${profile} profile`,
+-        record,
+-      )
+-      profileSteps.push(`${profile}: added`)
+-    }
+   }
+   return {
+     ok: true,
+     updated: true,
+     needsRestart: true,
+     steps: [
+-      'Published dsh/AgentSociety packages updated',
++      'AgentSociety plugins updated; dsh remains independently managed',
+       ...(updateHost ? ['Published agent-host package updated'] : []),
+       ...profileSteps,
+     ],

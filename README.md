@@ -22,15 +22,14 @@ dsh-TUI 适配已[归档](archive/dsh-tui/README.md)，不再参与安装、更�
 | deepseek-harness | `7422271b91753b4c53051e875b3f96961e57c979` |
 | AgentSociety | `03fe4f7` |
 
-发布版运行时绑定：`@deepseek-ai/dsh@0.2.1-rc.2`，来源为
-`Fantasia-Infinity/deepseek-harness`（对应已发布 commit
-`7422271b91753b4c53051e875b3f96961e57c979`）；AgentSociety 插件为
-`@agent-society/dsh-agent-society`。Combo 会分别校验 npm 与 source 模式的 dsh
-版本；两种模式的差异只通过显式 `--source` 选择，不会静默混用。
+普通安装使用独立的官方 `@deepseek-ai/dsh`；已验证 `0.2.0-rc.2` 和 `0.2.1-rc.2`。
+DSH 由用户独立升级，Combo 的 npm `--update` 只更新 AgentSociety。
+源码开发模式锁定 fork 的 `7422271b91753b4c53051e875b3f96961e57c979`，不再对 DSH 打补丁。
 
 源码模式针对该 fork 的适配保留为最小补丁：上游已原生支持 Web 反向代理子路径，
-Combo 不再重复打旧的 Web base-path patch；仅补回 worker profile 启动时需要的
-profile-local runtime 标记。实验性的 Agent Teams 保持上游默认关闭，不加入 Combo profile。
+Combo 不再打 Web base-path 或 `DSH_PROFILE` 启动补丁。AgentSociety 使用官方
+`profileContext.name` 只在专用 profile 中启用 worker；普通 Web 不启用 worker。
+实验性的 Agent Teams 不加入新建 Combo profile。
 
 源码构建使用上游 `build:artifacts`，统一生成原生扩展、Host/Client bundle、Web
 及 `.dsh-build/client-build-environment.json`，保证浏览器版本信息和构建记录一致。
@@ -40,6 +39,34 @@ AgentSociety 的新配置和未指定模型的 worker/摘要默认使用上游�
 已构建的隔离源码安装可运行 `node scripts/smoke-source.mjs --root <安装目录>`：
 它使用临时 DSH_HOME 和本机 mock Hub/MCP 验证 Web preload、headless 请求中的
 Hub 工具以及 worker 领取任务、完成模型回合和保存 transcript，无需真实密钥。
+
+## 预构建插件与独立安装
+
+在隔离的源码开发安装中构建 AgentSociety 后，生成可发布安装包：
+
+```bash
+node scripts/package-standalone.mjs --source /path/to/AgentSociety --output /new/release-directory
+dsh plugin --profile web add /new/release-directory/agent-society-dsh-agent-society-0.3.0.tgz
+npm install -g /new/release-directory/agent-society-agent-host-0.2.0.tgz # 可选
+```
+
+安装包内嵌共享配置实现，不需要未发布的 `agent-config`，安装和启动无需源码或 TypeScript。
+DSH/Cordis 通过宿主 peer 解析；不捆绑另一份 DSH。普通插件不覆盖压缩、sandbox、搜索或
+DSH 模型凭据。worker 的工具权限只作用于其任务会话。`agent update` 和 worker 自更新仅
+更新 AgentSociety；Hub 401 会提示 `agent connect`。安装包尚需单独发布到 npm 后才能按包名安装。
+
+官方 npm DSH 的隔离测试：
+
+```bash
+node scripts/smoke-source.mjs --dsh-package /runtime/node_modules/@deepseek-ai/dsh \
+  --plugin /profile/node_modules/@agent-society/dsh-agent-society
+```
+
+可用 `--web-profile /path/to/profile` 检查已有 Codex/SSH 插件的共存，用
+`--without-agent-society` 验证卸载后的 DSH。测试复制 profile 依赖到临时目录，使用 mock Hub
+和无密钥模型，不接入生产身份。
+
+现有源码安装的备份、切换与回滚步骤见[独立安装迁移说明](docs/standalone-installation.md)。
 
 源码模式默认 Web preset 为 dsh 自带的 `standard`，可通过 `--preset` 选择
 `ptc` / `minimal` / `cordis`。归档中的 TUI 补丁与第三方 preset 记录仅供历史查阅。
@@ -156,7 +183,7 @@ curl -fsSL .../install.sh | bash -s -- \
 | `--skip-links` | 关闭 | 不写 `~/.dsh` 与 bin 链接 |
 | `--skip-config` | 关闭 | 历史兼容参数，当前无效果 |
 | `--force-build` | 关闭 | 即使已有构建产物也重新构建 |
-| `--update` | 关闭 | 按当前 lock 更新已安装组件，变化项自动重装依赖与构建 |
+| `--update` | 关闭 | npm 模式只更新 AgentSociety；source 模式按 lock 更新源码并构建变化项 |
 | `--with-ssh [spec]` | 关闭 | 向 `web` profile 追加 SSH 插件；source 模式使用兼容的 `agent-society-web` |
 | `--dry-run` | 关闭 | 只打印安装计划 |
 
@@ -241,8 +268,8 @@ bridge 会等待本地 DSH Web 就绪、注册 `dsh_web` 节点能力，并转�
 npm 模式下更新由 dsh/npm 管理，不在 `node_modules` 或安装目录执行 Git 更新：
 
 ```bash
-npm install -g @deepseek-ai/dsh@0.2.1-alpha.2 @agent-society/agent-host
-agent update                         # 更新 dsh、Host、三个 dsh profile 插件
+npm install -g @deepseek-ai/dsh@0.2.1-rc.2 # 独立升级 DSH，另行安排数据备份与验收
+agent update                         # 仅更新 Host 和已安装 AgentSociety 的 profile
 combo install --update               # 也可以只更新 AgentSociety 插件
 ```
 

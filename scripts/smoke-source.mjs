@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, writeFile, symlink, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, symlink, rm, readFile, cp } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { parseArgs } from "node:util";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
@@ -8,12 +10,13 @@ import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 // Usage: node scripts/smoke-source.mjs --root /path/to/isolated/combo
 // Requires built sources. Uses only local mock Hub/MCP and a keyless adapter.
-const args = process.argv.slice(2);
-if (args.length !== 2 || args[0] !== "--root")
-  throw new Error("Usage: node scripts/smoke-source.mjs --root DIR");
-const root = resolve(args[1]);
-const harness = join(root, "sources/deepseek-harness");
-const plugin = join(root, "sources/agent-society/dsh-plugin");
+const { values } = parseArgs({ options: { root: {type:'string'}, 'dsh-package': {type:'string'}, plugin: {type:'string'}, 'web-profile': {type:'string'}, 'without-agent-society': {type:'boolean'} } });
+if (!values.root && !(values['dsh-package'] && values.plugin)) throw new Error('Use --root DIR or --dsh-package DSH_PACKAGE --plugin INSTALLED_PLUGIN [--web-profile PROFILE]');
+const harness = values.root ? resolve(values.root, 'sources/deepseek-harness') : undefined;
+const dshPackage = values['dsh-package'] ? resolve(values['dsh-package']) : join(harness, 'apps/cli');
+const dshBin = join(dshPackage, 'lib/bin.js');
+const llmModule = createRequire(join(dshPackage, 'package.json')).resolve('@deepseek-ai/dsh-llm');
+const plugin = values.plugin ? resolve(values.plugin) : resolve(values.root, 'sources/agent-society/dsh-plugin');
 const observer = fileURLToPath(
   new URL("../test/fixtures/source-runtime-observer.mjs", import.meta.url),
 );
@@ -130,8 +133,14 @@ for (const [profile, bundles] of Object.entries({
   "agent-society-worker": ["@deepseek-ai/dsh-base"],
 })) {
   const dir = join(home, "profiles", profile);
+  if (profile === 'web' && values['web-profile']) {
+    await mkdir(dir, {recursive:true});
+    await writeFile(join(dir,'package.json'),await readFile(resolve(values['web-profile'],'package.json')));
+    await cp(resolve(values['web-profile'],'node_modules'),join(dir,'node_modules'),{recursive:true,verbatimSymlinks:true});
+    continue;
+  }
   await mkdir(join(dir, "node_modules/@agent-society"), { recursive: true });
-  await symlink(
+  if (!values['without-agent-society']) await symlink(
     plugin,
     join(dir, "node_modules/@agent-society/dsh-agent-society"),
     process.platform === "win32" ? "junction" : "dir",
@@ -141,9 +150,9 @@ for (const [profile, bundles] of Object.entries({
     JSON.stringify({
       private: true,
       type: "module",
-      dependencies: { "@agent-society/dsh-agent-society": "link:" + plugin },
+      dependencies: values['without-agent-society'] ? {} : { "@agent-society/dsh-agent-society": "link:" + plugin },
       dsh: {
-        profile: { bundles: [...bundles, "@agent-society/dsh-agent-society"] },
+        profile: { bundles: values['without-agent-society'] ? bundles : [...bundles, "@agent-society/dsh-agent-society"] },
       },
     }),
   );
@@ -175,7 +184,8 @@ const env = Object.fromEntries(
   ),
 );
 Object.assign(env, {
-  COMBO_SMOKE_HARNESS: harness,
+  COMBO_SMOKE_LLM_MODULE: llmModule,
+  COMBO_SMOKE_EXPECT_HUB: values['without-agent-society'] ? '0' : '1',
   HOME: home,
   USERPROFILE: home,
   DSH_HOME: home,
@@ -198,7 +208,7 @@ const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 const timeout = (ms) => new Promise((r) => setTimeout(r, ms).unref());
 const children = [];
 try {
-  for (const profile of ["web", "headless", "agent-society-worker"]) {
+  for (const profile of values['without-agent-society'] ? ["web", "headless"] : ["web", "headless", "agent-society-worker"]) {
     const before = requests.filter((p) => p.endsWith("/tasks/claim")).length;
     const extra =
       profile === "web"
@@ -209,7 +219,7 @@ try {
     const child = spawn(
       process.execPath,
       [
-        join(harness, "apps/cli/lib/bin.js"),
+        dshBin,
         "--profile",
         profile,
         "--patch",
@@ -237,7 +247,7 @@ try {
     });
     const deadline = Date.now() + 30000;
     while (Date.now() < deadline && !roster && !exited) {
-      if (child.connected) child.send("roster");
+      if (child.connected && (profile !== 'web' || /dsh web: http:\/\//u.test(output))) child.send("roster");
       await delay(100);
     }
     if (profile === "headless") {
@@ -257,10 +267,8 @@ try {
       continue;
     }
     assert.ok(roster && !roster.error, output + "\n" + JSON.stringify(roster));
-    assert.ok(
-      roster.tools.includes("mcp__agent-society__hub_context_read"),
-      JSON.stringify(roster),
-    );
+    assert.equal(roster.tools.includes("mcp__agent-society__hub_context_read"), !values['without-agent-society'], JSON.stringify(roster));
+    if (profile === 'web' && values['web-profile']) for (const name of ['dsh-codex-subscription', 'dsh-ssh-remote']) assert.ok(roster.plugins.some(e => (e.owner === name || e.name === name) && e.state === 2), name + ' not active: ' + JSON.stringify(roster.importErrors));
     const worker = roster.entries.find(
       (e) => e.name === "@agent-society/dsh-agent-society/worker",
     );
@@ -304,7 +312,9 @@ try {
           exchange: 303,
           html: 200,
           preload: true,
-          hubMcp: true,
+          hubMcp: !values['without-agent-society'],
+          compression: roster.compression,
+          sandboxMode: roster.sandboxMode,
           worker: false,
         }),
       );

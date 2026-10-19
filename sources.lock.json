@@ -4,12 +4,7 @@
     "deepseek-harness": {
       "commit": "7422271b91753b4c53051e875b3f96961e57c979",
       "files": [],
-      "patches": [
-        {
-          "path": "patches/deepseek-harness/0008-profile-runtime-fact-rc2.patch",
-          "sha256": "d9bbedf42fb92c5b99d3ecf7bbb237eccf33688fbe3d73a47c85e8dc66841660"
-        }
-      ],
+      "patches": [],
       "repo": "https://github.com/Fantasia-Infinity/deepseek-harness.git"
     },
     "agent-society": {
@@ -71,6 +66,10 @@
         {
           "path": "patches/agent-society/0015-dsh-0.2.1-rc2-model-defaults.patch",
           "sha256": "d97913c7aa36e582204d4f756a0a5f00a54b0f1a098e561063b50866c080e8d7"
+        },
+        {
+          "path": "patches/agent-society/0016-standalone-plugin.patch",
+          "sha256": "c0105738876a235e3a2cdd4a2d27fe167d72a3cd6fd9f8882752c5969026d174"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/AgentSociety.git"
@@ -81,6 +80,7 @@
     "dsh": {
       "package": "@deepseek-ai/dsh",
       "version": "0.2.1-rc.2",
+      "supportedVersions": ["0.2.0-rc.2", "0.2.1-rc.2"],
       "source": "Fantasia-Infinity/deepseek-harness",
       "commit": "7422271b91753b4c53051e875b3f96961e57c979"
     },

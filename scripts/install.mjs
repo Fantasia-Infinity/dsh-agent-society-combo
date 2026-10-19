@@ -210,27 +210,21 @@ async function installPublishedMode() {
       `dsh was not found or is not executable. Install it first with: npm install -g ${options.dshPackage}`,
     )
   }
-  if (options.update) {
-    console.log(`[npm] update ${options.dshPackage}@${options.dshVersion}`)
-    runChecked('npm', ['install', '--global', `${options.dshPackage}@${options.dshVersion}`], comboRoot)
-    dsh = resolveDshInvocation()
-    if (!dsh) throw new Error('dsh disappeared after the global package update')
-  }
   if (!which('pnpm') && !which('corepack')) {
     throw new Error('pnpm is required by `dsh plugin`; install pnpm or enable corepack')
   }
   console.log(`[ok] dsh ${dsh.command} ${dsh.args.join(' ')}`.trim())
   const version = runCapture(dsh.command, [...dsh.args, '--version'], comboRoot, false)
   const actualVersion = version.stdout.trim().split(/\s+/u).at(-1)
-  if (version.status !== 0 || actualVersion !== options.dshVersion) {
+  const supportedVersions = process.env.COMBO_DSH_VERSION ? [options.dshVersion] : (publishedDsh.supportedVersions || [options.dshVersion])
+  if (version.status !== 0 || !supportedVersions.includes(actualVersion)) {
     throw new Error(
       'dsh ' +
         (actualVersion || 'unknown') +
-        ' is incompatible. This Combo release requires ' +
+        ' is incompatible. Supported official versions of ' +
         options.dshPackage +
-        '@' +
-        options.dshVersion +
-        ' from Fantasia-Infinity/deepseek-harness',
+        ': ' + supportedVersions.join(', ') +
+        '. Upgrade DSH separately before installing AgentSociety.',
     )
   }
   const profiles = ['web', 'headless', 'agent-society-worker']
@@ -253,7 +247,6 @@ async function installPublishedMode() {
     console.log('[plugin] add dsh-plugin-subscriptions -> web')
     runDsh(dsh, ['plugin', '--profile', 'web', 'add', 'dsh-plugin-subscriptions'])
   }
-  ensureWorkerProfileActivation()
   if (installHost) {
     console.log('[npm] install optional @agent-society/agent-host')
     runChecked('npm', ['install', '--global', '@agent-society/agent-host'], comboRoot)
@@ -261,7 +254,7 @@ async function installPublishedMode() {
   writeInstallState({
     mode: 'npm',
     dshPackage: options.dshPackage,
-    expectedDshVersion: options.dshVersion,
+    expectedDshVersion: actualVersion,
     dshSource: 'Fantasia-Infinity/deepseek-harness',
     dshSourceCommit: manifest.components['deepseek-harness']?.commit,
     pluginSpec: options.pluginSpec,
@@ -347,7 +340,7 @@ function printPlan() {
     }
     if (options.withSsh) console.log(`  dsh plugin --profile web add ${options.sshPlugin}`)
     if (options.withSubscriptions) console.log('  dsh plugin --profile web add dsh-plugin-subscriptions')
-    console.log('  write worker profile marker .env (AGENT_SOCIETY_WORKER=1)')
+    console.log('  worker activation uses the official profileContext.name service')
     console.log('  launch worker with dsh --profile agent-society-worker (profile-scoped activation)')
     if (options.withHost) console.log('  npm install --global @agent-society/agent-host')
     return
@@ -387,24 +380,6 @@ function runDsh(invocation, args) {
   runChecked(invocation.command, [...invocation.args, ...args], comboRoot, true, {
     DSH_HOME: dshHome,
   })
-}
-
-function ensureWorkerProfileActivation() {
-  const profileDir = join(dshHome, 'profiles', 'agent-society-worker')
-  ensureDir(profileDir)
-  const envPath = join(profileDir, '.env')
-  const current = existsSync(envPath) ? readFileSync(envPath, 'utf8') : ''
-  const lines = current
-    .split(/\r?\n/u)
-    .filter((line) => !/^\s*AGENT_SOCIETY_WORKER\s*=/u.test(line))
-  if (lines.at(-1)?.trim()) lines.push('')
-  lines.push('AGENT_SOCIETY_WORKER=1')
-  writeFileSync(
-    envPath,
-    `${lines.join('\n').replace(/\n+$/u, '')}\n`,
-    { mode: 0o600 },
-  )
-  if (platform() !== 'win32') chmodSync(envPath, 0o600)
 }
 
 function writeInstallState(state) {
@@ -828,8 +803,6 @@ async function createLinks(harness, agentSociety) {
   for (const profileName of ['web', 'headless', 'agent-society-worker']) {
     ensureSourcePluginProfile(harness, pluginSource, profileName)
   }
-  ensureWorkerProfileActivation()
-  ensureSessionCompressionCompatibility()
 }
 
 function ensureSourcePluginProfile(harness, pluginSource, profileName) {
@@ -849,48 +822,6 @@ function ensureSourcePluginProfile(harness, pluginSource, profileName) {
   }
 }
 
-function ensureSessionCompressionCompatibility() {
-  const envPath = join(dshHome, '.env')
-  const current = existsSync(envPath) ? readFileSync(envPath, 'utf8') : ''
-  if (/^\s*AGENT_SOCIETY_SESSION_COMPRESSION\s*=/mu.test(current)) return
-
-  const sessionRoot = join(dshHome, 'sessions')
-  const hasZstd = findFileSuffix(sessionRoot, '.jsonl.zstd')
-  const hasPlain = findFileSuffix(sessionRoot, '.jsonl')
-  if (!hasZstd || hasPlain) {
-    if (hasZstd && hasPlain) {
-      console.warn(`[warn] mixed session compression detected under ${sessionRoot}; set AGENT_SOCIETY_SESSION_COMPRESSION explicitly before starting dsh`)
-    }
-    return
-  }
-
-  const lines = current.split(/\r?\n/u)
-  if (lines.at(-1)?.trim()) lines.push('')
-  lines.push('AGENT_SOCIETY_SESSION_COMPRESSION=zstd')
-  writeFileSync(
-    envPath,
-    `${lines.join('\n').replace(/\n+$/u, '')}\n`,
-    { mode: 0o600 },
-  )
-  if (platform() !== 'win32') chmodSync(envPath, 0o600)
-  console.log(`[config] existing .jsonl.zstd sessions detected; set AGENT_SOCIETY_SESSION_COMPRESSION=zstd in ${envPath}`)
-}
-
-function findFileSuffix(dir, suffix) {
-  if (!existsSync(dir)) return false
-  let entries
-  try {
-    entries = readdirSync(dir, { withFileTypes: true })
-  } catch {
-    return false
-  }
-  for (const entry of entries) {
-    const child = join(dir, entry.name)
-    if (entry.isFile() && entry.name.endsWith(suffix)) return true
-    if (entry.isDirectory() && findFileSuffix(child, suffix)) return true
-  }
-  return false
-}
 
 function linkLocalPackage(source, packageDir, packageName) {
   const scope = join(packageDir, 'node_modules', packageName.split('/')[0])
@@ -961,11 +892,7 @@ async function ensureWebProfile(harness, agentSociety, sshSpec, preset, withSubs
     '- id: agent-presets\n' +
     "  name: '@deepseek-ai/dsh-agent-presets'\n" +
     '  config:\n' +
-    `    default: ${presetName}\n\n` +
-    '- id: session-persistence-jsonl\n' +
-    '  config:\n' +
-    "    root: !!js dshHomePath('sessions')\n" +
-    "    compression: !!js process.env.AGENT_SOCIETY_SESSION_COMPRESSION || 'zstd'\n"
+    `    default: ${presetName}\n`
   if (existsSync(patchFile) && readFileSync(patchFile, 'utf8') !== managedPatch) {
     const backup = `${patchFile}.combo-backup-${Date.now()}`
     writeFileSync(backup, readFileSync(patchFile, 'utf8'))

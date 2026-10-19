@@ -129,7 +129,7 @@ async function doctorNpm() {
     const actual = version.stdout.trim().split(/\s+/u).at(-1) || "";
     check(
       "dsh fork release",
-      version.status === 0 && actual === expectedDshVersion,
+      version.status === 0 && (actual === expectedDshVersion || (!process.env.COMBO_DSH_VERSION && publishedDsh.supportedVersions?.includes(actual))),
       "expected " +
         expectedDshVersion +
         " from " +
@@ -271,9 +271,9 @@ function doctorProfile(profile, worker, pluginPackage) {
   if (worker) {
     check(
       profile + " worker activation",
-      env.AGENT_SOCIETY_WORKER === "1",
-      envPath + " must contain AGENT_SOCIETY_WORKER=1",
-      "printf 'AGENT_SOCIETY_WORKER=1\\n' > " + envPath,
+      installed && profile === "agent-society-worker",
+      "activated by official profileContext.name in the dedicated profile",
+      "dsh plugin --profile agent-society-worker add " + pluginPackage,
     );
   } else {
     check(

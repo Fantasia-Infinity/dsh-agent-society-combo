@@ -2,7 +2,7 @@
   "checksums": {},
   "components": {
     "deepseek-harness": {
-      "commit": "1b316d0444450d484ade4c1da76f9224d33251bc",
+      "commit": "7422271b91753b4c53051e875b3f96961e57c979",
       "files": [],
       "patches": [
         {
@@ -63,6 +63,14 @@
         {
           "path": "patches/agent-society/0013-dsh-0.2.1-alpha2-package-pins.patch",
           "sha256": "8da42f41b31ed3bec1c23c403349d4902d52b05073950b96a26555ba359c3b08"
+        },
+        {
+          "path": "patches/agent-society/0014-dsh-0.2.1-rc2-package-pins.patch",
+          "sha256": "bd0740e44a6420db3c90ea9934a09f142df8a110aebf5ca4165aa2e8a3564663"
+        },
+        {
+          "path": "patches/agent-society/0015-dsh-0.2.1-rc2-model-defaults.patch",
+          "sha256": "d97913c7aa36e582204d4f756a0a5f00a54b0f1a098e561063b50866c080e8d7"
         }
       ],
       "repo": "https://github.com/Fantasia-Infinity/AgentSociety.git"
@@ -72,9 +80,9 @@
   "published": {
     "dsh": {
       "package": "@deepseek-ai/dsh",
-      "version": "0.2.1-alpha.2",
+      "version": "0.2.1-rc.2",
       "source": "Fantasia-Infinity/deepseek-harness",
-      "commit": "1b316d0444450d484ade4c1da76f9224d33251bc"
+      "commit": "7422271b91753b4c53051e875b3f96961e57c979"
     },
     "agentSocietyPlugin": {
       "package": "@agent-society/dsh-agent-society",

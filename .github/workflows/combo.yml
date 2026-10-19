@@ -42,6 +42,8 @@ jobs:
           node-version: 24
       - run: node --check scripts/install.mjs
       - run: node --check scripts/doctor.mjs
+      - run: node --check scripts/smoke-source.mjs
+      - run: node --check test/fixtures/source-runtime-observer.mjs
       - run: node scripts/render-matrix.mjs --check
       - run: node --test test/combo.test.mjs
       - run: git diff --check

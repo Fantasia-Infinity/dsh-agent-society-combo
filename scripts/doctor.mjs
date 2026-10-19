@@ -116,7 +116,7 @@ async function doctorNpm() {
     process.env.COMBO_DSH_VERSION ||
     state.expectedDshVersion ||
     publishedDsh.version ||
-    "0.2.1-alpha.2";
+    "0.2.1-rc.2";
   const dsh = resolveDshInvocation();
   check(
     "dsh command",
@@ -397,6 +397,17 @@ function doctorSource() {
   const agent = join(root, "sources", "agent-society");
   check("source dsh CLI", existsSync(join(harness, "apps", "cli", "lib", "bin.js")));
   check("source dsh Web build", existsSync(join(harness, "apps", "web", "dist", "index.html")));
+  const buildRecord = readJson(join(harness, ".dsh-build", "client-build-environment.json"));
+  const builtVersion = buildRecord?.environment?.DSH_CLIENT_VERSION;
+  const builtCommit = buildRecord?.environment?.DSH_CLIENT_COMMIT_HASH;
+  const expectedCommit = manifest.components?.["deepseek-harness"]?.commit;
+  check(
+    "source dsh client build metadata",
+    builtVersion === publishedDsh.version && typeof builtCommit === "string" &&
+      typeof expectedCommit === "string" && builtCommit === expectedCommit.slice(0, 7),
+    "version=" + (builtVersion || "missing") + ", commit=" + (builtCommit || "missing"),
+    "node scripts/install.mjs --source --update --force-build",
+  );
   check("source AgentSociety Host build", existsSync(join(agent, "agent-host", "dist", "src", "cli.js")));
   check("source AgentSociety plugin build", existsSync(join(agent, "dsh-plugin", "lib", "worker-plugin.js")));
   check(
@@ -528,7 +539,7 @@ async function liveWebSmoke(dsh) {
     "live dsh Web startup",
     Boolean(html) && !badPreload,
     html ? "HTTP response received" : output.trim().slice(-500) || "no HTTP response",
-    "npm install -g @deepseek-ai/dsh@0.2.1-alpha.2 && dsh web --no-open",
+    "npm install -g @deepseek-ai/dsh@" + (publishedDsh.version || "0.2.1-rc.2") + " && dsh web --no-open",
   );
   if (html) {
     const hasClientPreload = html.includes(

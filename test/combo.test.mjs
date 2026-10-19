@@ -24,7 +24,7 @@ test("source dry-run adapts dsh without scheduling the archived TUI", () => {
     encoding: "utf8",
   });
   assert.match(output, /deepseek-harness/u);
-  assert.match(output, /1b316d0444450d484ade4c1da76f9224d33251bc/u);
+  assert.match(output, /7422271b91753b4c53051e875b3f96961e57c979/u);
   assert.doesNotMatch(output, /dsh-tui|TUI|\.dsh-tui/iu);
   assert.doesNotMatch(output, /anchored-standard|opencode-full/iu);
   assert.match(output, /0003-dsh-first-runtime\.patch/u);

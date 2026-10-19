@@ -1,0 +1,153 @@
+diff --git a/dsh-plugin/cordis.patch.yml b/dsh-plugin/cordis.patch.yml
+index ce71d62..4be7fc2 100644
+--- a/dsh-plugin/cordis.patch.yml
++++ b/dsh-plugin/cordis.patch.yml
+@@ -27,7 +27,7 @@
+         principalId: !!js process.env.AGENT_SOCIETY_PRINCIPAL_ID
+         displayName: !!js process.env.AGENT_SOCIETY_DISPLAY_NAME
+         provider: !!js process.env.AGENT_SOCIETY_PROVIDER ?? 'deepseek-official'
+-        model: !!js process.env.AGENT_SOCIETY_MODEL ?? process.env.DSH_MODEL ?? process.env.AGENT_REMOTE_MODEL ?? 'deepseek-v4-flash'
++        model: !!js process.env.AGENT_SOCIETY_MODEL ?? process.env.DSH_MODEL ?? process.env.AGENT_REMOTE_MODEL ?? 'deepseek-flash'
+         maxTokens: !!js Number(process.env.AGENT_SOCIETY_MAX_TOKENS ?? 8192)
+         # Consensus digests into the Hub shared memory (default off).
+         # Consensus digests into the Hub shared memory (AGENT_SOCIETY_CONTEXT=0 disables).
+@@ -73,7 +73,7 @@
+         nodeId: !!js process.env.AGENT_SOCIETY_NODE_ID
+         workspaceRoot: !!js process.env.AGENT_SOCIETY_WORKSPACE_ROOT ?? process.cwd()
+         provider: !!js process.env.AGENT_SOCIETY_PROVIDER ?? 'deepseek-official'
+-        model: !!js process.env.AGENT_SOCIETY_MODEL ?? process.env.AGENT_DSH_MODEL ?? process.env.DSH_MODEL ?? process.env.AGENT_REMOTE_MODEL ?? 'deepseek-v4-flash'
++        model: !!js process.env.AGENT_SOCIETY_MODEL ?? process.env.AGENT_DSH_MODEL ?? process.env.DSH_MODEL ?? process.env.AGENT_REMOTE_MODEL ?? 'deepseek-flash'
+         maxTokens: !!js Number(process.env.AGENT_SOCIETY_MAX_TOKENS ?? 768)
+         pollSeconds: !!js Number(process.env.AGENT_SOCIETY_DIGEST_POLL_SECONDS ?? 15)
+         idleSeconds: !!js Number(process.env.AGENT_SOCIETY_DIGEST_IDLE_SECONDS ?? 60)
+@@ -116,7 +116,7 @@
+         nodeId: !!js process.env.AGENT_SOCIETY_NODE_ID
+         workspaceRoot: !!js process.env.AGENT_SOCIETY_WORKSPACE_ROOT ?? process.cwd()
+         provider: !!js process.env.AGENT_SOCIETY_PROVIDER ?? 'deepseek-official'
+-        model: !!js process.env.DSH_MODEL ?? process.env.AGENT_SOCIETY_MODEL ?? 'deepseek-v4-flash'
++        model: !!js process.env.DSH_MODEL ?? process.env.AGENT_SOCIETY_MODEL ?? 'deepseek-flash'
+         maxTokens: !!js Number(process.env.AGENT_SOCIETY_MAX_TOKENS ?? 8192)
+         policy: !!js process.env.AGENT_SOCIETY_QUESTION_POLICY ?? 'auto'
+         pollSeconds: !!js Number(process.env.AGENT_SOCIETY_QUESTION_POLL_SECONDS ?? 10)
+diff --git a/dsh-plugin/src/worker-plugin.ts b/dsh-plugin/src/worker-plugin.ts
+index f869828..5657b79 100644
+--- a/dsh-plugin/src/worker-plugin.ts
++++ b/dsh-plugin/src/worker-plugin.ts
+@@ -225,7 +225,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
+     directoryEnabled: config.directoryEnabled ?? process.env.AGENT_SOCIETY_DIRECTORY !== '0',
+     questionsEnabled: config.questionsEnabled ?? process.env.AGENT_SOCIETY_QUESTIONS !== '0',
+     provider: config.provider ?? 'deepseek-official',
+-    model: config.model ?? process.env.DSH_MODEL ?? 'deepseek-v4-flash',
++    model: config.model ?? process.env.DSH_MODEL ?? 'deepseek-flash',
+     maxTokens: config.maxTokens,
+     statePath: resolve(
+       process.env.DSH_HOME ?? `${process.env.HOME ?? '.'}/.dsh`,
+diff --git a/dsh-plugin/src/question-bridge.ts b/dsh-plugin/src/question-bridge.ts
+index bef535b..4616214 100644
+--- a/dsh-plugin/src/question-bridge.ts
++++ b/dsh-plugin/src/question-bridge.ts
+@@ -73,7 +73,7 @@ export function apply(ctx: Context, config: Config): void {
+   const nodeId = config.nodeId ?? host
+   const workspaceRoot = resolve(config.workspaceRoot ?? process.cwd())
+   const provider = config.provider ?? process.env.AGENT_SOCIETY_PROVIDER ?? 'deepseek-official'
+-  const model = config.model ?? process.env.DSH_MODEL ?? 'deepseek-v4-flash'
++  const model = config.model ?? process.env.DSH_MODEL ?? 'deepseek-flash'
+   const maxTokens = config.maxTokens
+   const policy: QuestionPolicy =
+     config.policy ??
+diff --git a/dsh-plugin/src/session-digest-watcher.ts b/dsh-plugin/src/session-digest-watcher.ts
+index a534460..404278d 100644
+--- a/dsh-plugin/src/session-digest-watcher.ts
++++ b/dsh-plugin/src/session-digest-watcher.ts
+@@ -174,7 +174,7 @@ export function apply(ctx: Context, config: Config): void {
+     process.env.AGENT_DSH_MODEL ??
+     process.env.DSH_MODEL ??
+     process.env.AGENT_REMOTE_MODEL ??
+-    'deepseek-v4-flash'
++    'deepseek-flash'
+   const maxTokens = Math.min(
+     config.maxTokens ?? DEFAULT_SUMMARY_MAX_TOKENS,
+     SUMMARY_MAX_TOKENS_HARD_LIMIT,
+diff --git a/agent-host/scripts/setup.mjs b/agent-host/scripts/setup.mjs
+index 94f00c5..5fd26ff
+--- a/agent-host/scripts/setup.mjs
++++ b/agent-host/scripts/setup.mjs
+@@ -585,7 +585,7 @@ async function collectModelValues(
+   const defaultBase =
+     provider === "deepseek" ? "https://api.deepseek.com" : existingBase;
+   const defaultModel =
+-    provider === "deepseek" ? "deepseek-v4-flash" : existingModel;
++    provider === "deepseek" ? "deepseek-flash" : existingModel;
+   const baseUrl = interactive
+     ? await askVisible(terminal, "OpenAI-compatible model URL", defaultBase)
+     : defaultBase;
+diff --git a/agent-host/src/config.ts b/agent-host/src/config.ts
+index 27b1f7a..dbc9242 100644
+--- a/agent-host/src/config.ts
++++ b/agent-host/src/config.ts
+@@ -86,7 +86,7 @@ export interface AgentHostConfig {
+   dshRuntimeArgs?: string[];
+   /** Absolute path to the dsh worker cordis.yml, default agent-host/config/dsh-worker.cordis.yml. */
+   dshConfigPath?: string;
+-  /** Model id requested from the dsh runtime, default remoteModel or deepseek-v4-flash. */
++  /** Model id requested from the dsh runtime, default remoteModel or deepseek-flash. */
+   dshModel?: string;
+   /** dsh provider route, default deepseek-official. */
+   dshProvider?: string;
+@@ -449,7 +449,7 @@ export function loadConfig(
+   const dshModel =
+     process.env.AGENT_DSH_MODEL?.trim() ||
+     remoteModel ||
+-    "deepseek-v4-flash";
++    "deepseek-flash";
+   const dshSessionRoot = resolve(
+     process.env.AGENT_DSH_SESSION_ROOT?.trim() ||
+       resolve(loadSessionDir(false), "dsh-sessions"),
+@@ -537,7 +537,7 @@ export function loadConfig(
+     ),
+     webSearchMode,
+     webSearchModel:
+-      process.env.AGENT_WEB_SEARCH_MODEL?.trim() || "deepseek-v4-flash",
++      process.env.AGENT_WEB_SEARCH_MODEL?.trim() || "deepseek-flash",
+     ...(piProvider ? { piProvider } : {}),
+     ...(piModel ? { piModel } : {}),
+     ...(remoteBaseUrl ? { remoteBaseUrl } : {}),
+diff --git a/agent-host/src/dsh-engine.ts b/agent-host/src/dsh-engine.ts
+index d6a23bc..afc62ff 100644
+--- a/agent-host/src/dsh-engine.ts
++++ b/agent-host/src/dsh-engine.ts
+@@ -760,7 +760,7 @@ export class DshAgentEngine implements AgentEngine {
+   }
+ 
+   get modelName(): string {
+-    return this.config.dshModel ?? "deepseek-v4-flash";
++    return this.config.dshModel ?? "deepseek-flash";
+   }
+ 
+   get sessionCompression(): DshSessionCompression {
+diff --git a/agent-host/src/dsh-env.ts b/agent-host/src/dsh-env.ts
+index 178f93e..86cf03c 100644
+--- a/agent-host/src/dsh-env.ts
++++ b/agent-host/src/dsh-env.ts
+@@ -80,7 +80,7 @@ export function buildDshWorkerEnv(
+   hub: HubClient,
+   repositoryRoot: string,
+ ): NodeJS.ProcessEnv {
+-  const model = config.dshModel ?? config.remoteModel ?? "deepseek-v4-flash";
++  const model = config.dshModel ?? config.remoteModel ?? "deepseek-flash";
+   const sourceCheckout =
+     existsSync(join(repositoryRoot, ".git")) &&
+     existsSync(join(repositoryRoot, "agent-host", "package.json"));
+diff --git a/agent-host/src/web-search.ts b/agent-host/src/web-search.ts
+index 190f8be..4834416 100644
+--- a/agent-host/src/web-search.ts
++++ b/agent-host/src/web-search.ts
+@@ -37,7 +37,7 @@ export class DeepSeekResponsesWebSearchProvider implements WebSearchProvider {
+   constructor(
+     private readonly baseUrl: string,
+     private readonly apiKey: string,
+-    readonly model = "deepseek-v4-flash",
++    readonly model = "deepseek-flash",
+     private readonly fetchImpl: FetchLike = fetch,
+     private readonly timeoutMs = 90_000,
+   ) {}

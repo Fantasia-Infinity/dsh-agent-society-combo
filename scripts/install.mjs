@@ -89,7 +89,7 @@ function parseArgs(argv) {
     withHost: process.env.COMBO_WITH_HOST === '1',
     withHostExplicit: process.env.COMBO_WITH_HOST === '1',
     dshPackage: process.env.COMBO_DSH_PACKAGE || publishedDsh.package || '@deepseek-ai/dsh',
-    dshVersion: process.env.COMBO_DSH_VERSION || publishedDsh.version || '0.2.1-alpha.2',
+    dshVersion: process.env.COMBO_DSH_VERSION || publishedDsh.version || '0.2.1-rc.2',
     pluginSpec: process.env.COMBO_AGENT_PLUGIN || publishedPlugin.package || '@agent-society/dsh-agent-society',
     dryRun: false,
     yes: false,
@@ -758,59 +758,26 @@ function linkLocalDshPackages(harness, pluginDir) {
 async function buildAll(harness, agentSociety, changed) {
   const harnessBin = join(harness, 'apps', 'cli', 'lib', 'bin.js')
   const bootLib = join(harness, 'packages', 'boot', 'app-boot', 'lib', 'index.js')
-  // Client-face packages (@deepseek-ai/dsh-typert-registry,
-  // @deepseek-ai/dsh-api-gateway, ...) are emitted only by the Client pass;
-  // the Web profile loads them at boot, so both build:lib passes are required.
+  // The upstream artifact pipeline builds the native addon, both compiler
+  // faces, runtime bundles, and Web with one consistent client environment.
   const clientLib = join(harness, 'packages', 'api', 'gateway', 'lib', 'index.js')
+  const webDist = join(harness, 'apps', 'web', 'dist', 'index.html')
+  const buildRecord = join(harness, '.dsh-build', 'client-build-environment.json')
+  const nativePlatformDir = join(harness, 'native', 'system', 'packages', `${platform()}-${arch()}`)
   if (
     options.forceBuild ||
     changed.has('deepseek-harness') ||
     !existsSync(harnessBin) ||
     !existsSync(bootLib) ||
-    !existsSync(clientLib)
-  ) {
-    console.log('[build] deepseek-harness build:lib (host + client passes)')
-    pnpm(harness, ['run', 'build:lib'])
-  } else {
-    console.log('[skip] deepseek-harness already built')
-  }
-
-  // The agent-society-web profile mounts the browser surface, which resolves
-  // @deepseek-ai/dsh-web-frontend/dist/index.html. build:lib alone does not
-  // emit that dist, so the web UI would boot and then fail on first request.
-  const webDist = join(harness, 'apps', 'web', 'dist', 'index.html')
-  if (
-    options.forceBuild ||
-    changed.has('deepseek-harness') ||
-    !existsSync(webDist)
-  ) {
-    console.log('[build] deepseek-harness build:web (browser frontend)')
-    pnpm(harness, ['run', 'build:web'])
-  } else {
-    console.log('[skip] deepseek-harness web dist already built')
-  }
-
-  // dsh >= 0.1.5 locks sessions through the native system addon (POSIX
-  // flock). Without the host binary every session dies at creation with
-  // "session artifact ... uses .jsonl.zstd" / "ended without an assistant
-  // message". The static landlock helper also built by build:native needs
-  // musl-gcc, so fall back to the host addon when the full pass fails.
-  const nativeSystem = join(harness, 'native', 'system')
-  const nativePlatformDir = join(nativeSystem, 'packages', `${platform()}-${arch()}`)
-  if (
-    options.forceBuild ||
-    changed.has('deepseek-harness') ||
+    !existsSync(clientLib) ||
+    !existsSync(webDist) ||
+    !existsSync(buildRecord) ||
     !nativeAddonBuilt(nativePlatformDir)
   ) {
-    console.log('[build] deepseek-harness native system addon')
-    try {
-      pnpm(nativeSystem, ['run', 'build:native'])
-    } catch {
-      console.warn('[warn] full native build failed (landlock needs musl-gcc); building the host addon only')
-      pnpm(nativeSystem, ['run', 'build:native', '--host-addon-only'])
-    }
+    console.log('[build] deepseek-harness build:artifacts (native + host + client + Web)')
+    pnpm(harness, ['run', 'build:artifacts'])
   } else {
-    console.log('[skip] deepseek-harness native addon already built')
+    console.log('[skip] deepseek-harness artifacts already built')
   }
 
   const agentConfig = join(agentSociety, 'agent-config')

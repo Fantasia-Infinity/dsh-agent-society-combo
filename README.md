@@ -19,18 +19,27 @@ dsh-TUI 适配已[归档](archive/dsh-tui/README.md)，不再参与安装、更�
 
 | 组件 | 固定 commit |
 |---|---|
-| deepseek-harness | `1b316d0444450d484ade4c1da76f9224d33251bc` |
+| deepseek-harness | `7422271b91753b4c53051e875b3f96961e57c979` |
 | AgentSociety | `03fe4f7` |
 
-发布版运行时绑定：`@deepseek-ai/dsh@0.2.1-alpha.2`，来源为
+发布版运行时绑定：`@deepseek-ai/dsh@0.2.1-rc.2`，来源为
 `Fantasia-Infinity/deepseek-harness`（对应已发布 commit
-`1b316d0444450d484ade4c1da76f9224d33251bc`）；AgentSociety 插件为
+`7422271b91753b4c53051e875b3f96961e57c979`）；AgentSociety 插件为
 `@agent-society/dsh-agent-society`。Combo 会分别校验 npm 与 source 模式的 dsh
 版本；两种模式的差异只通过显式 `--source` 选择，不会静默混用。
 
 源码模式针对该 fork 的适配保留为最小补丁：上游已原生支持 Web 反向代理子路径，
 Combo 不再重复打旧的 Web base-path patch；仅补回 worker profile 启动时需要的
 profile-local runtime 标记。实验性的 Agent Teams 保持上游默认关闭，不加入 Combo profile。
+
+源码构建使用上游 `build:artifacts`，统一生成原生扩展、Host/Client bundle、Web
+及 `.dsh-build/client-build-environment.json`，保证浏览器版本信息和构建记录一致。
+AgentSociety 的新配置和未指定模型的 worker/摘要默认使用上游当前的 `deepseek-flash`；
+显式模型设置保持优先，不自动改写已有用户配置。
+
+已构建的隔离源码安装可运行 `node scripts/smoke-source.mjs --root <安装目录>`：
+它使用临时 DSH_HOME 和本机 mock Hub/MCP 验证 Web preload、headless 请求中的
+Hub 工具以及 worker 领取任务、完成模型回合和保存 transcript，无需真实密钥。
 
 源码模式默认 Web preset 为 dsh 自带的 `standard`，可通过 `--preset` 选择
 `ptc` / `minimal` / `cordis`。归档中的 TUI 补丁与第三方 preset 记录仅供历史查阅。
@@ -68,7 +77,7 @@ AGENT_DSH_WEB_BRIDGE_START=0  # 禁用自动启动，要求已有 DSH Web
 先安装当前 fork 对应的 dsh 发布包：
 
 ```bash
-npm install -g @deepseek-ai/dsh@0.2.1-alpha.2
+npm install -g @deepseek-ai/dsh@0.2.1-rc.2
 ```
 
 然后添加 AgentSociety 插件到三个彼此隔离的 profile：
